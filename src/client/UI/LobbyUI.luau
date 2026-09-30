@@ -1,18 +1,17 @@
 --!strict
--- Lobby UI: the coin HUD, toasts, and the station panels that open when you
--- walk up to a lobby NPC/machine and press E (Crates, Shop, Loadout,
--- Collection, Leaderboard, Daily Reward, Stats).
+-- Lobby UI: wallet (coins · score multiplier · hoverboards), toasts, the big
+-- buttons down the left side, and the panels they open: Upgrades, Brainrots,
+-- Shop, Daily reward, Leaderboards and Stats. The same panels also open from
+-- the world (upgrade stall, locked pedestals, leaderboard…).
 
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local TweenService = game:GetService("TweenService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
-local BiomeData = require(Shared.BiomeData)
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
-local CrateData = require(Shared.CrateData)
 local DailyRewardData = require(Shared.DailyRewardData)
-local EquipmentData = require(Shared.EquipmentData)
+local PowerUpData = require(Shared.PowerUpData)
 local Remotes = require(Shared.Remotes)
 local Util = require(Shared.Util)
 
@@ -24,24 +23,19 @@ local C = UIKit.Colors
 local gui: ScreenGui
 local hud: Frame
 local coinsLabel: TextLabel
+local multiplierLabel: TextLabel
+local boardsLabel: TextLabel
 local toastHolder: Frame
 local data: any = nil
 
 type PanelDef = { frame: Frame, content: Frame, refresh: (arg: string?) -> () }
 local panels: { [string]: PanelDef } = {}
 local openName: string? = nil
-local selectedSlot = 1
-local revealing = false -- true while the crate reveal animation plays
 
 -- ───────────────────────────── toasts ─────────────────────────────
 
 function LobbyUI.Toast(text: string, color: Color3?)
-	local label = UIKit.Label({
-		Text = text,
-		Size = UDim2.new(1, 0, 0, 38),
-		TextColor3 = color or C.Text,
-		Parent = toastHolder,
-	})
+	local label = UIKit.Label({ Text = text, Size = UDim2.new(1, 0, 0, 38), TextColor3 = color or C.Text, Parent = toastHolder })
 	UIKit.Pop(label)
 	task.delay(2.6, function()
 		TweenService:Create(label, TweenInfo.new(0.4), { TextTransparency = 1 }):Play()
@@ -68,12 +62,12 @@ end
 -- ───────────────────────────── panel plumbing ─────────────────────────────
 
 local function close()
-	revealing = false
 	if openName then
 		panels[openName].frame.Visible = false
 	end
 	openName = nil
 end
+LobbyUI.Close = close
 
 function LobbyUI.Open(name: string, arg: string?)
 	local panel = panels[name]
@@ -86,8 +80,6 @@ function LobbyUI.Open(name: string, arg: string?)
 	UIKit.Pop(panel.frame)
 	panel.refresh(arg)
 end
-
-LobbyUI.Close = close
 
 local function definePanel(name: string, title: string, refresh: (content: Frame, arg: string?) -> ())
 	local frame, content = UIKit.Panel(gui, title, UDim2.fromScale(0.9, 0.82), close)
@@ -102,125 +94,133 @@ local function definePanel(name: string, title: string, refresh: (content: Frame
 end
 
 local function refreshOpen()
-	if openName and not revealing then
+	if openName then
 		panels[openName].refresh(nil)
 	end
 end
 
--- ───────────────────────────── crates ─────────────────────────────
-
-local function oddsText(crate: CrateData.Crate): string
-	local total = 0
-	for _, w in crate.weights do
-		total += w
-	end
-	local parts = {}
-	for _, rarity in { "Common", "Rare", "Legendary" } do
-		local w = crate.weights[rarity]
-		if w then
-			table.insert(parts, ("%s %d%%"):format(rarity, math.floor(w / total * 100 + 0.5)))
-		end
-	end
-	return table.concat(parts, " · ")
+local function coins(): number
+	return if data then data.Coins else 0
 end
 
-local revealLayer: Frame
+-- ───────────────────────────── upgrades ─────────────────────────────
 
--- Crate reveal: a full-screen slot-machine reel that plays wherever you are.
-function LobbyUI.Reveal(res: any)
-	if revealing or type(res) ~= "table" or not res.itemId then
-		return
+local function levelPips(level: number): string
+	local out = {}
+	for i = 1, PowerUpData.MaxLevel do
+		table.insert(out, if i <= level then "■" else "□")
 	end
-	revealing = true
-	local overlay = UIKit.New("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, Size = UDim2.fromScale(1, 1), Parent = revealLayer })
-	local card = UIKit.Card({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(420, 360), BackgroundColor3 = C.Panel, Parent = overlay })
-	local crate = CrateData.Get(res.crateId or "")
-	UIKit.Label({ Text = if crate then "📦 " .. crate.name else "📦 CRATE", TextColor3 = if crate then crate.color else C.Gold, Size = UDim2.new(1, 0, 0, 36), Position = UDim2.fromOffset(0, 10), Parent = card })
-	local reel = UIKit.Label({ Text = "📦", Size = UDim2.new(1, 0, 0, 130), Position = UDim2.fromOffset(0, 54), Parent = card })
-	local nameLabel = UIKit.Label({ Text = "OPENING…", Size = UDim2.new(1, -20, 0, 40), Position = UDim2.fromOffset(10, 196), Parent = card })
-	local detail = UIKit.Label({ Text = "", Size = UDim2.new(1, -20, 0, 26), Position = UDim2.fromOffset(10, 240), TextColor3 = C.Muted, Parent = card })
-
-	-- Reel slows down before the reveal.
-	local delay = 0.05
-	while delay < 0.28 do
-		local item = EquipmentData.Items[math.random(1, #EquipmentData.Items)]
-		reel.Text = item.icon
-		reel.TextColor3 = EquipmentData.RarityColors[item.rarity]
-		task.wait(delay)
-		delay *= 1.18
-	end
-
-	local item = EquipmentData.Get(res.itemId) :: EquipmentData.Item
-	reel.Text = item.icon
-	reel.TextColor3 = EquipmentData.RarityColors[item.rarity]
-	UIKit.Pop(reel)
-	nameLabel.Text = ("%s%s"):format(if res.isNew then "✨ NEW! " else "", item.name)
-	nameLabel.TextColor3 = EquipmentData.RarityColors[item.rarity]
-	detail.Text = ("%s · %s %s · Level %d%s"):format(
-		string.upper(item.rarity),
-		EquipmentData.AbilityIcons[item.ability],
-		item.ability,
-		res.level or 1,
-		if res.isNew then " (auto-equipped if a slot was free)" else " — duplicate levels it up!"
-	)
-	UIKit.Button({ Text = "NICE!", Size = UDim2.fromOffset(180, 50), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 290), BackgroundColor3 = C.Good }, function()
-		overlay:Destroy()
-		revealing = false
-		refreshOpen()
-	end).Parent = card
+	return table.concat(out, " ")
 end
 
-local busy = false
-local function crateAction(fn: () -> any)
-	if busy or revealing then
-		return
+local function buildUpgrades(content: Frame)
+	local scroller = UIKit.Scroller(content)
+	UIKit.List(nil, 10).Parent = scroller
+	UIKit.Label({ Text = ("🪙 %s coins to spend"):format(Util.FormatNumber(coins())), TextColor3 = C.Gold, Size = UDim2.new(1, 0, 0, 30), Parent = scroller })
+
+	-- Power-ups: longer and longer with each level (Subway Surfers style)
+	for i, p in PowerUpData.List do
+		local level = if data then (data.Upgrades[p.id] or 0) else 0
+		local cost = PowerUpData.NextCost(level)
+		local row = UIKit.Card({ Size = UDim2.new(1, -12, 0, 78), LayoutOrder = i + 1, Parent = scroller })
+		UIKit.Label({ Text = p.icon, Size = UDim2.fromOffset(64, 64), Position = UDim2.fromOffset(8, 7), Parent = row })
+		UIKit.Label({ Text = p.name, Size = UDim2.new(0.5, -80, 0, 26), Position = UDim2.fromOffset(80, 8), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = p.color, Parent = row })
+		UIKit.Label({
+			Text = ("%s   %ss → %ss"):format(levelPips(level), tostring(PowerUpData.Duration(p.id, level)), tostring(PowerUpData.Duration(p.id, math.min(level + 1, PowerUpData.MaxLevel)))),
+			Size = UDim2.new(0.5, -80, 0, 20),
+			Position = UDim2.fromOffset(80, 36),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = C.Muted,
+			Parent = row,
+		})
+		UIKit.Label({ Text = p.description, Size = UDim2.new(0.5, -80, 0, 16), Position = UDim2.fromOffset(80, 56), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Muted, Parent = row })
+		UIKit.Button({
+			Text = if cost then ("⬆️ 🪙 %s"):format(Util.FormatNumber(cost)) else "MAXED",
+			Size = UDim2.new(0.3, 0, 0, 50),
+			Position = UDim2.new(0.68, 0, 0, 14),
+			BackgroundColor3 = if cost and coins() >= cost then C.Good else C.PanelLight,
+		}, function()
+			if cost then
+				result(Remotes.Function("BuyUpgrade"):InvokeServer(p.id), ("%s upgraded!"):format(p.name))
+			end
+		end).Parent = row
 	end
-	busy = true
-	local res = fn()
-	busy = false
-	if type(res) == "table" and res.ok and res.itemId then
-		task.spawn(LobbyUI.Reveal, res)
-	else
-		result(res)
-	end
+
+	-- Pedestals: room for more Brainrots = a higher multiplier ceiling
+	local pedestals = if data then data.Pedestals else Config.Score.StartingPedestals
+	local pedestalCost = if pedestals < Config.Score.MaxPedestals then Config.Score.PedestalCosts[pedestals - Config.Score.StartingPedestals + 1] else nil
+	local pRow = UIKit.Card({ Size = UDim2.new(1, -12, 0, 78), LayoutOrder = 20, Parent = scroller })
+	UIKit.Label({ Text = "🏛️", Size = UDim2.fromOffset(64, 64), Position = UDim2.fromOffset(8, 7), Parent = pRow })
+	UIKit.Label({ Text = ("Brainrot Pedestals  %d / %d"):format(pedestals, Config.Score.MaxPedestals), Size = UDim2.new(0.6, -80, 0, 26), Position = UDim2.fromOffset(80, 10), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Accent, Parent = pRow })
+	UIKit.Label({ Text = "More pedestals = more Brainrots boosting your multiplier.", Size = UDim2.new(0.6, -80, 0, 18), Position = UDim2.fromOffset(80, 42), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Muted, Parent = pRow })
+	UIKit.Button({
+		Text = if pedestalCost then ("➕ 🪙 %s"):format(Util.FormatNumber(pedestalCost)) else "FULL",
+		Size = UDim2.new(0.3, 0, 0, 50),
+		Position = UDim2.new(0.68, 0, 0, 14),
+		BackgroundColor3 = if pedestalCost and coins() >= pedestalCost then C.Good else C.PanelLight,
+	}, function()
+		if pedestalCost then
+			result(Remotes.Function("BuyPedestal"):InvokeServer(), "🏛️ New pedestal on your base!")
+		end
+	end).Parent = pRow
+
+	-- Hoverboards
+	local hRow = UIKit.Card({ Size = UDim2.new(1, -12, 0, 78), LayoutOrder = 21, Parent = scroller })
+	UIKit.Label({ Text = "🛹", Size = UDim2.fromOffset(64, 64), Position = UDim2.fromOffset(8, 7), Parent = hRow })
+	UIKit.Label({ Text = ("Hoverboards  (you have %d)"):format(if data then data.Hoverboards else 0), Size = UDim2.new(0.6, -80, 0, 26), Position = UDim2.fromOffset(80, 10), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(120, 200, 255), Parent = hRow })
+	UIKit.Label({ Text = ("Ride for %ds; saves you from one crash. Press E / double-tap."):format(Config.PowerUps.HoverboardDuration), Size = UDim2.new(0.6, -80, 0, 18), Position = UDim2.fromOffset(80, 42), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Muted, Parent = hRow })
+	UIKit.Button({
+		Text = ("BUY 🪙 %s"):format(Util.FormatNumber(Config.Economy.HoverboardCost)),
+		Size = UDim2.new(0.3, 0, 0, 50),
+		Position = UDim2.new(0.68, 0, 0, 14),
+		BackgroundColor3 = if coins() >= Config.Economy.HoverboardCost then C.Good else C.PanelLight,
+	}, function()
+		result(Remotes.Function("BuyHoverboards"):InvokeServer("Coins"), "🛹 +1 hoverboard!")
+	end).Parent = hRow
 end
 
-local function buildCrates(content: Frame, highlight: string?)
-	local row = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = content })
-	UIKit.List(Enum.FillDirection.Horizontal, 14).Parent = row
-	for i, crate in CrateData.Crates do
-		local owned = if data then (data.Crates[crate.id] or 0) else 0
-		local card = UIKit.Card({ Size = UDim2.new(1 / 3, -10, 1, 0), LayoutOrder = i, Parent = row })
-		if highlight == crate.id then
-			UIKit.Stroke(5, crate.color).Parent = card
-		end
-		UIKit.List(nil, 6).Parent = card
-		UIKit.Padding(10).Parent = card
-		UIKit.Label({ Text = "📦", Size = UDim2.new(1, 0, 0.24, 0), Parent = card })
-		UIKit.Label({ Text = crate.name, TextColor3 = crate.color, Size = UDim2.new(1, 0, 0, 30), Parent = card })
-		UIKit.Label({ Text = oddsText(crate), TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 18), Parent = card })
+-- ───────────────────────────── brainrots ─────────────────────────────
 
-		-- Buying opens it right here.
-		UIKit.Button({ Text = ("BUY & OPEN  🪙 %s"):format(Util.FormatNumber(crate.coinPrice)), Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.Gold, TextColor3 = Color3.new(0, 0, 0) }, function()
-			crateAction(function()
-				return Remotes.Function("BuyCrate"):InvokeServer(crate.id, "Coins")
-			end)
-		end).Parent = card
-
-		if crate.robuxLabel then
-			local configured = crate.productKey and (Config.DeveloperProducts :: any)[crate.productKey] ~= 0
-			UIKit.Button({ Text = ("BUY & OPEN  %s"):format(crate.robuxLabel), Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = if configured then C.Good else C.PanelLight }, function()
-				result(Remotes.Function("BuyCrate"):InvokeServer(crate.id, "Robux"))
-			end).Parent = card
+local function buildBrainrots(content: Frame)
+	local owned = if data then data.Brainrots else {}
+	local displayed = if data then data.Displayed else {}
+	local pedestals = if data then data.Pedestals else 0
+	UIKit.Label({
+		Text = ("⭐ SCORE MULTIPLIER x%d   ·   🏛️ %d / %d pedestals used"):format(if data then data.Multiplier else 1, #displayed, pedestals),
+		TextColor3 = C.Gold,
+		Size = UDim2.new(1, 0, 0, 30),
+		Parent = content,
+	})
+	UIKit.Label({ Text = ("Rescue Brainrots from %s's cages on runs. Your best ones stand on your pedestals and add to your multiplier."):format(Config.Villain.Title), TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 32), Parent = content })
+	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -58), Position = UDim2.fromOffset(0, 58) })
+	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(170, 190), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+	local onPedestal: { [string]: number } = {}
+	for _, id in displayed do
+		onPedestal[id] = (onPedestal[id] or 0) + 1
+	end
+	for i, b in BrainrotData.List do
+		local count = owned[b.id] or 0
+		local have = count > 0
+		local rarityColor = BrainrotData.RarityColors[b.rarity] or C.Gold
+		local card = UIKit.Card({ LayoutOrder = i, Parent = grid })
+		if (onPedestal[b.id] or 0) > 0 then
+			UIKit.Stroke(4, C.Gold).Parent = card
 		end
-
-		if owned > 0 then
-			UIKit.Button({ Text = ("OPEN FREE (%d)"):format(owned), Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.Accent }, function()
-				crateAction(function()
-					return Remotes.Function("OpenCrate"):InvokeServer(crate.id)
-				end)
-			end).Parent = card
+		UIKit.Label({ Text = if have then b.icon else "❓", Size = UDim2.new(1, 0, 0, 56), Position = UDim2.fromOffset(0, 6), Parent = card })
+		UIKit.Label({ Text = if have then ("%s  x%d"):format(b.name, count) else "???", Size = UDim2.new(1, -8, 0, 22), Position = UDim2.fromOffset(4, 64), Parent = card })
+		UIKit.Label({ Text = string.upper(b.rarity), Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 88), TextColor3 = rarityColor, Parent = card })
+		UIKit.Label({ Text = ("⭐ +%dx multiplier"):format(b.bonus), Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 110), TextColor3 = C.Good, Parent = card })
+		local status
+		if b.catchWeight == 0 then
+			status = ("%s's henchman — can't be rescued"):format(Config.Villain.Title)
+		elseif not have then
+			status = ("Rescue it on runs after %dm"):format(b.minDistance)
+		elseif (onPedestal[b.id] or 0) > 0 then
+			status = ("✅ On %d pedestal%s"):format(onPedestal[b.id], if onPedestal[b.id] == 1 then "" else "s")
+		else
+			status = "Not on a pedestal — buy more!"
 		end
+		UIKit.Label({ Text = status, Size = UDim2.new(1, -10, 0, 40), Position = UDim2.fromOffset(5, 138), TextColor3 = C.Muted, TextWrapped = true, Parent = card })
 	end
 end
 
@@ -229,20 +229,17 @@ end
 local function buildShop(content: Frame)
 	local scroller = UIKit.Scroller(content)
 	UIKit.List(nil, 10).Parent = scroller
-	UIKit.Label({ Text = "📦 CRATES", TextColor3 = C.Gold, Size = UDim2.new(1, 0, 0, 34), Parent = scroller })
-	for _, crate in CrateData.Crates do
-		local row = UIKit.Card({ Size = UDim2.new(1, -12, 0, 60), Parent = scroller })
-		UIKit.Label({ Text = "📦 " .. crate.name, TextColor3 = crate.color, Size = UDim2.new(0.5, 0, 1, -16), Position = UDim2.fromOffset(12, 8), TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
-		UIKit.Button({ Text = "🪙 " .. Util.FormatNumber(crate.coinPrice), Size = UDim2.new(0.22, 0, 1, -16), Position = UDim2.new(0.52, 0, 0, 8), BackgroundColor3 = C.Gold, TextColor3 = Color3.new(0, 0, 0) }, function()
-			result(Remotes.Function("BuyCrate"):InvokeServer(crate.id, "Coins"))
-		end).Parent = row
-		if crate.robuxLabel then
-			UIKit.Button({ Text = crate.robuxLabel, Size = UDim2.new(0.22, 0, 1, -16), Position = UDim2.new(0.76, 0, 0, 8), BackgroundColor3 = C.Good }, function()
-				result(Remotes.Function("BuyCrate"):InvokeServer(crate.id, "Robux"))
-			end).Parent = row
-		end
-	end
-	UIKit.Label({ Text = "🪙 COIN PACKS", TextColor3 = C.Gold, Size = UDim2.new(1, 0, 0, 34), Parent = scroller })
+	UIKit.Label({ Text = "🛹 HOVERBOARDS", TextColor3 = Color3.fromRGB(120, 200, 255), Size = UDim2.new(1, 0, 0, 30), Parent = scroller })
+	local boards = UIKit.Card({ Size = UDim2.new(1, -12, 0, 60), Parent = scroller })
+	UIKit.Label({ Text = ("🛹 You have %d"):format(if data then data.Hoverboards else 0), Size = UDim2.new(0.4, 0, 1, -16), Position = UDim2.fromOffset(12, 8), TextXAlignment = Enum.TextXAlignment.Left, Parent = boards })
+	UIKit.Button({ Text = ("+1  🪙 %s"):format(Util.FormatNumber(Config.Economy.HoverboardCost)), Size = UDim2.new(0.26, 0, 1, -16), Position = UDim2.new(0.44, 0, 0, 8), BackgroundColor3 = C.Gold, TextColor3 = Color3.new(0, 0, 0) }, function()
+		result(Remotes.Function("BuyHoverboards"):InvokeServer("Coins"), "🛹 +1 hoverboard!")
+	end).Parent = boards
+	UIKit.Button({ Text = "+5  (R$)", Size = UDim2.new(0.26, 0, 1, -16), Position = UDim2.new(0.72, 0, 0, 8), BackgroundColor3 = C.Good }, function()
+		result(Remotes.Function("BuyHoverboards"):InvokeServer("Robux"))
+	end).Parent = boards
+
+	UIKit.Label({ Text = "🪙 COIN PACKS", TextColor3 = C.Gold, Size = UDim2.new(1, 0, 0, 30), Parent = scroller })
 	for _, pack in { { key = "CoinPackSmall", label = "🪙 2,500 COINS" }, { key = "CoinPackLarge", label = "💰 12,000 COINS" } } do
 		local row = UIKit.Card({ Size = UDim2.new(1, -12, 0, 60), Parent = scroller })
 		UIKit.Label({ Text = pack.label, Size = UDim2.new(0.6, 0, 1, -16), Position = UDim2.fromOffset(12, 8), TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
@@ -250,141 +247,7 @@ local function buildShop(content: Frame)
 			result(Remotes.Function("BuyCoinPack"):InvokeServer(pack.key))
 		end).Parent = row
 	end
-	UIKit.Label({ Text = "Tip: crates also drop from 💥 BONUS vaults during runs!", TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 24), Parent = scroller })
-end
-
--- ───────────────────────────── loadout ─────────────────────────────
-
-local function buildLoadout(content: Frame)
-	local unlocked = if data then data.UnlockedSlots else 1
-	local left = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0.36, 0, 1, 0), Parent = content })
-	UIKit.List(nil, 10).Parent = left
-	UIKit.Label({ Text = "LOADOUT", TextColor3 = C.Accent2, Size = UDim2.new(1, 0, 0, 32), Parent = left })
-	for slot = 1, 3 do
-		local itemId = if data then data.Loadout[slot] else ""
-		local item = EquipmentData.Get(itemId)
-		local isLocked = slot > unlocked
-		local text
-		if isLocked then
-			text = ("🔒 Slot %d — unlocks after %d runs"):format(slot, Config.LoadoutSlotUnlocks[slot])
-		elseif item then
-			local level = EquipmentData.LevelFromCount(data.Inventory[item.id] or 1)
-			text = ("Slot %d: %s %s  (x%d)"):format(slot, item.icon, item.name, EquipmentData.ChargesAt(item, level))
-		else
-			text = ("Slot %d: ➕ empty"):format(slot)
-		end
-		local button = UIKit.Button({
-			Text = text,
-			Size = UDim2.new(1, 0, 0, 56),
-			BackgroundColor3 = if isLocked then C.PanelLight elseif slot == selectedSlot then C.Accent else Color3.fromRGB(90, 70, 140),
-		}, function()
-			if not isLocked then
-				selectedSlot = slot
-				refreshOpen()
-			end
-		end)
-		button.Parent = left
-	end
-	UIKit.Button({ Text = "UNEQUIP SLOT", Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.Bad }, function()
-		result(Remotes.Function("EquipItem"):InvokeServer(selectedSlot, ""))
-	end).Parent = left
-	UIKit.Label({ Text = "Select a slot, then pick equipment →", TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 20), Parent = left })
-
-	local right = UIKit.Scroller(content, { Size = UDim2.new(0.62, 0, 1, 0), Position = UDim2.fromScale(0.38, 0) })
-	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(150, 150), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = right })
-	local owned = {}
-	for _, item in EquipmentData.Items do
-		if data and (data.Inventory[item.id] or 0) > 0 then
-			table.insert(owned, item)
-		end
-	end
-	table.sort(owned, function(a, b)
-		return EquipmentData.RarityOrder[a.rarity] > EquipmentData.RarityOrder[b.rarity]
-	end)
-	for i, item in owned do
-		local level = EquipmentData.LevelFromCount(data.Inventory[item.id])
-		local equippedSlot = table.find(data.Loadout, item.id)
-		local card = UIKit.New("TextButton", { Text = "", BackgroundColor3 = C.PanelLight, LayoutOrder = i, AutoButtonColor = true, Parent = right })
-		UIKit.Corner(12).Parent = card
-		UIKit.Stroke(3, EquipmentData.RarityColors[item.rarity]).Parent = card
-		UIKit.Label({ Text = item.icon, Size = UDim2.new(1, 0, 0.42, 0), Parent = card })
-		UIKit.Label({ Text = item.name, Size = UDim2.new(1, -8, 0, 24), Position = UDim2.new(0, 4, 0.44, 0), TextColor3 = EquipmentData.RarityColors[item.rarity], Parent = card })
-		UIKit.Label({ Text = ("Lv %d · x%d charges"):format(level, EquipmentData.ChargesAt(item, level)), Size = UDim2.new(1, -8, 0, 18), Position = UDim2.new(0, 4, 0.63, 0), TextColor3 = C.Muted, Parent = card })
-		UIKit.Label({ Text = if equippedSlot then ("✅ SLOT %d"):format(equippedSlot) else "", Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 0.8, 0), TextColor3 = C.Good, Parent = card })
-		card.Activated:Connect(function()
-			result(Remotes.Function("EquipItem"):InvokeServer(selectedSlot, item.id), ("Equipped %s %s"):format(item.icon, item.name))
-		end)
-	end
-	if #owned == 0 then
-		UIKit.Label({ Text = "No equipment yet — open crates!", Parent = right })
-	end
-end
-
--- ───────────────────────────── collection ─────────────────────────────
-
-local function whereToFind(brainrotId: string): string
-	local names = {}
-	for _, biome in BiomeData.WhereToFind(brainrotId) do
-		table.insert(names, biome.icon .. " " .. biome.name)
-	end
-	return if #names > 0 then "Catch in: " .. table.concat(names, ", ") else "???"
-end
-
--- Brainrots: what you own, what they earn on your base, and which one is
--- your run buddy.
-local function buildBrainrots(content: Frame)
-	local owned = if data then data.Brainrots else {}
-	local found = 0
-	for _, b in BrainrotData.List do
-		if (owned[b.id] or 0) > 0 then
-			found += 1
-		end
-	end
-	UIKit.Label({
-		Text = ("🧠 %d / %d owned   ·   💰 base income +%s/s   ·   🤝 buddy: %s"):format(
-			found,
-			#BrainrotData.List,
-			Util.FormatNumber(if data then data.IncomePerSecond else 0),
-			if data and BrainrotData.Get(data.Buddy) then (BrainrotData.Get(data.Buddy) :: any).name else "none"
-		),
-		TextColor3 = C.Gold,
-		Size = UDim2.new(1, 0, 0, 28),
-		Parent = content,
-	})
-	UIKit.Label({ Text = ("Your best %d Brainrots stand on your base and earn coins. Catch more in runs!"):format(Config.Plot.Pedestals), TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 30), Parent = content })
-	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -56), Position = UDim2.fromOffset(0, 56) })
-	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(170, 220), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
-	for i, b in BrainrotData.List do
-		local count = owned[b.id] or 0
-		local have = count > 0
-		local isBuddy = data and data.Buddy == b.id
-		local rarityColor = BrainrotData.RarityColors[b.rarity] or C.Gold
-		local card = UIKit.Card({ LayoutOrder = i, Parent = grid })
-		if isBuddy then
-			UIKit.Stroke(4, C.Gold).Parent = card
-		end
-		UIKit.Label({ Text = if have then b.icon else "❓", Size = UDim2.new(1, 0, 0, 56), Position = UDim2.fromOffset(0, 6), Parent = card })
-		UIKit.Label({ Text = if have then ("%s  x%d"):format(b.name, count) else "???", Size = UDim2.new(1, -8, 0, 22), Position = UDim2.fromOffset(4, 64), Parent = card })
-		UIKit.Label({ Text = string.upper(b.rarity), Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 88), TextColor3 = rarityColor, Parent = card })
-		UIKit.Label({ Text = ("💰 +%s/s each"):format(Util.FormatNumber(b.income)), Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 108), TextColor3 = C.Good, Parent = card })
-		UIKit.Label({ Text = "🤝 " .. b.perkText, Size = UDim2.new(1, -10, 0, 34), Position = UDim2.fromOffset(5, 130), TextColor3 = C.Accent2, TextWrapped = true, Parent = card })
-		if isBuddy then
-			UIKit.Label({ Text = "✅ RUN BUDDY", Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 176), TextColor3 = C.Gold, Parent = card })
-		elseif have then
-			UIKit.Button({ Text = "SET AS BUDDY", Size = UDim2.new(1, -16, 0, 34), Position = UDim2.fromOffset(8, 176), BackgroundColor3 = C.Accent }, function()
-				result(Remotes.Function("SetBuddy"):InvokeServer(b.id), ("🤝 %s will run with you!"):format(b.name))
-			end).Parent = card
-		else
-			UIKit.Label({
-				Text = whereToFind(b.id),
-				Size = UDim2.new(1, -10, 0, 30),
-				Position = UDim2.fromOffset(5, 176),
-				TextColor3 = C.Muted,
-				TextWrapped = true,
-				Parent = card,
-			})
-		end
-	end
+	UIKit.Label({ Text = "Spend coins on power-ups and pedestals in ⬆️ Upgrades.", TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 22), Parent = scroller })
 end
 
 -- ───────────────────────────── leaderboard ─────────────────────────────
@@ -479,14 +342,14 @@ local function buildStats(content: Frame)
 		end
 	end
 	local rows = {
-		{ "🏆 Best Distance", Util.FormatNumber(stats.BestDistance or 0) .. "m" },
-		{ "🛣️ Total Distance", Util.FormatNumber(stats.TotalDistance or 0) .. "m" },
+		{ "🏆 High Score", Util.FormatNumber(stats.HighScore or 0) },
+		{ "⭐ Score Multiplier", "x" .. (if data then data.Multiplier else 1) },
+		{ "📏 Furthest Run", Util.FormatNumber(stats.BestDistance or 0) .. "m" },
+		{ "🔓 Brainrots Rescued", Util.FormatNumber(stats.BrainrotsRescued or 0) },
+		{ "🧠 Different Brainrots", ("%d / %d"):format(found, #BrainrotData.List) },
 		{ "🏃 Total Runs", Util.FormatNumber(stats.TotalRuns or 0) },
+		{ "🪙 Coins Collected", Util.FormatNumber(stats.TotalCoins or 0) },
 		{ "⏱️ Longest Survival", Util.FormatNumber(stats.LongestSurvival or 0) .. "s" },
-		{ "🪙 Coins Earned", Util.FormatNumber(stats.TotalCoins or 0) },
-		{ "⚡ Equipment Collected", Util.FormatNumber(stats.EquipmentCollected or 0) },
-		{ "🧠 Brainrots Owned", ("%d / %d"):format(found, #BrainrotData.List) },
-		{ "💰 Base Income", "+" .. Util.FormatNumber(if data then data.IncomePerSecond else 0) .. "/s" },
 	}
 	local list = UIKit.Scroller(content)
 	UIKit.List(nil, 8).Parent = list
@@ -499,22 +362,14 @@ end
 
 -- ───────────────────────────── HUD / init ─────────────────────────────
 
-local incomeLabel: TextLabel
-local crateBadge: TextLabel
-
 function LobbyUI.SetData(snapshot: any)
 	if not snapshot then
 		return
 	end
 	data = snapshot
 	coinsLabel.Text = "🪙 " .. Util.FormatNumber(snapshot.Coins)
-	incomeLabel.Text = ("💰 +%s/s on your base"):format(Util.FormatNumber(snapshot.IncomePerSecond or 0))
-	local crates = 0
-	for _, n in snapshot.Crates do
-		crates += n
-	end
-	crateBadge.Text = tostring(crates)
-	crateBadge.Visible = crates > 0
+	multiplierLabel.Text = ("⭐ Score multiplier x%d"):format(snapshot.Multiplier or 1)
+	boardsLabel.Text = ("🛹 %d hoverboard%s"):format(snapshot.Hoverboards or 0, if snapshot.Hoverboards == 1 then "" else "s")
 	refreshOpen()
 end
 
@@ -527,33 +382,32 @@ end
 
 function LobbyUI.Init(playerGui: PlayerGui)
 	gui = UIKit.New("ScreenGui", { Name = "LobbyUI", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui })
-
 	hud = UIKit.New("Frame", { Name = "HUD", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = gui })
 
 	-- Wallet (top left)
-	local wallet = UIKit.New("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.15, Position = UDim2.fromOffset(16, 60), Size = UDim2.fromOffset(250, 84), Parent = hud })
+	local wallet = UIKit.New("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.15, Position = UDim2.fromOffset(16, 60), Size = UDim2.fromOffset(270, 104), Parent = hud })
 	UIKit.Corner(14).Parent = wallet
 	UIKit.Stroke(3, C.Gold).Parent = wallet
 	UIKit.Padding(8).Parent = wallet
 	UIKit.List(nil, 4, Enum.HorizontalAlignment.Left).Parent = wallet
 	coinsLabel = UIKit.Label({ Text = "🪙 …", Size = UDim2.new(1, 0, 0, 36), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gold, Parent = wallet })
-	incomeLabel = UIKit.Label({ Text = "💰 …", Size = UDim2.new(1, 0, 0, 22), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Good, Parent = wallet })
+	multiplierLabel = UIKit.Label({ Text = "⭐ …", Size = UDim2.new(1, 0, 0, 22), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 200, 60), Parent = wallet })
+	boardsLabel = UIKit.Label({ Text = "🛹 …", Size = UDim2.new(1, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(120, 200, 255), Parent = wallet })
 
-	-- Big simulator-style buttons down the left side: everything opens from anywhere.
-	local bar = UIKit.New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.55, 0), Size = UDim2.fromOffset(170, 470), Parent = hud })
+	-- Big simulator-style buttons down the left side.
+	local bar = UIKit.New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.58, 0), Size = UDim2.fromOffset(170, 360), Parent = hud })
 	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(80, 80), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = bar })
 	local buttons = {
-		{ "📦\nCRATES", "Crates", C.Accent2 },
-		{ "⚙️\nGEAR", "Loadout", Color3.fromRGB(120, 120, 160) },
+		{ "⬆️\nUPGRADES", "Upgrades", C.Good },
 		{ "🧠\nBRAINROTS", "Brainrots", C.Accent },
-		{ "🛒\nSHOP", "Shop", C.Good },
+		{ "🛒\nSHOP", "Shop", C.Accent2 },
 		{ "🎁\nDAILY", "Daily", C.Bad },
 		{ "🏆\nTOP", "Leaderboard", C.Gold },
 		{ "📊\nSTATS", "Stats", Color3.fromRGB(90, 160, 255) },
 		{ "🏠\nMY BASE", "", Color3.fromRGB(255, 150, 60) },
 	}
 	for i, def in buttons do
-		local button = UIKit.Button({ Text = def[1], LayoutOrder = i, BackgroundColor3 = def[3], Size = UDim2.fromOffset(80, 80) }, function()
+		UIKit.Button({ Text = def[1], LayoutOrder = i, BackgroundColor3 = def[3], Size = UDim2.fromOffset(80, 80) }, function()
 			if def[2] == "" then
 				close()
 				Remotes.Event("GoToBase"):FireServer()
@@ -562,16 +416,11 @@ function LobbyUI.Init(playerGui: PlayerGui)
 			else
 				LobbyUI.Open(def[2])
 			end
-		end)
-		button.Parent = bar
-		if def[2] == "Crates" then
-			crateBadge = UIKit.Label({ Text = "0", Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(1, -4, 0, 4), Size = UDim2.fromOffset(28, 28), BackgroundTransparency = 0, BackgroundColor3 = C.Bad, ZIndex = 3, Parent = button })
-			UIKit.Corner(14).Parent = crateBadge
-		end
+		end).Parent = bar
 	end
 
 	UIKit.Label({
-		Text = "🏃 Walk into the portal at the back of <b>your base</b> to run!",
+		Text = ("🏃 Walk into the portal at the back of <b>your base</b> to escape %s!"):format(Config.Villain.Title),
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
 		Size = UDim2.new(0.6, 0, 0, 28),
@@ -581,15 +430,14 @@ function LobbyUI.Init(playerGui: PlayerGui)
 	toastHolder = UIKit.New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 70), Size = UDim2.new(0.6, 0, 0, 200), ZIndex = 20, Parent = gui })
 	UIKit.List(nil, 4).Parent = toastHolder
 
-	definePanel("Crates", "📦 EQUIPMENT CRATES", buildCrates)
-	definePanel("Shop", "🛒 BRAINROT SHOP", function(content)
-		buildShop(content)
-	end)
-	definePanel("Loadout", "⚙️ EQUIPMENT", function(content)
-		buildLoadout(content)
+	definePanel("Upgrades", "⬆️ UPGRADES", function(content)
+		buildUpgrades(content)
 	end)
 	definePanel("Brainrots", "🧠 MY BRAINROTS", function(content)
 		buildBrainrots(content)
+	end)
+	definePanel("Shop", "🛒 SHOP", function(content)
+		buildShop(content)
 	end)
 	definePanel("Leaderboard", "🏆 LEADERBOARDS", function(content)
 		buildLeaderboard(content)
@@ -601,10 +449,7 @@ function LobbyUI.Init(playerGui: PlayerGui)
 		buildStats(content)
 	end)
 
-	-- Crate reveals sit above everything else.
-	revealLayer = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 30, Parent = UIKit.New("ScreenGui", { Name = "CrateReveal", ResetOnSpawn = false, DisplayOrder = 20, Parent = playerGui }) })
-
-	-- World stations (crate stands, buddy pad, equipment stands…) open panels too.
+	-- World stations (upgrade stall, locked pedestals, leaderboard…) open panels too.
 	ProximityPromptService.PromptTriggered:Connect(function(prompt)
 		local panel = prompt:GetAttribute("OpenPanel")
 		if panel then

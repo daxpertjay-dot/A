@@ -209,6 +209,53 @@ function ModelFactory.Brainrot(id: string, scale: number?): Model
 	return model
 end
 
+-- The villain: a blocky evil scientist in a lab coat with glowing goggles,
+-- wild hair and a giant net for catching Brainrots. Pivot at the feet,
+-- facing -Z.
+function ModelFactory.Villain(scale: number?): Model
+	local s = scale or 1
+	local model = Instance.new("Model")
+	model.Name = "Villain"
+	local root = add(model, { Name = "Root", Size = Vector3.new(1, 1, 1), CFrame = CFrame.new(0, 0.5 * s, 0), Transparency = 1, CastShadow = false })
+	model.PrimaryPart = root
+
+	local coat = Color3.fromRGB(235, 235, 240)
+	local dark = Color3.fromRGB(35, 25, 45)
+	local skin = Color3.fromRGB(200, 170, 150)
+	local purple = Color3.fromRGB(120, 40, 170)
+	-- Legs & boots
+	for _, side in { -0.7, 0.7 } do
+		add(model, { Name = "Leg", Size = Vector3.new(1.2, 3, 1.2) * s, CFrame = CFrame.new(side * s, 1.9 * s, 0), Color = dark })
+		add(model, { Name = "Boot", Size = Vector3.new(1.4, 0.8, 1.9) * s, CFrame = CFrame.new(side * s, 0.4 * s, -0.25 * s), Color = Color3.fromRGB(20, 20, 20) })
+	end
+	-- Lab coat body with a long tail
+	add(model, { Name = "Coat", Size = Vector3.new(3.2, 3.8, 1.9) * s, CFrame = CFrame.new(0, 5.2 * s, 0), Color = coat })
+	add(model, { Name = "CoatTail", Size = Vector3.new(3.3, 1.6, 1.5) * s, CFrame = CFrame.new(0, 3.0 * s, 0.2 * s), Color = coat })
+	add(model, { Name = "Tie", Size = Vector3.new(0.5, 2.2, 0.2) * s, CFrame = CFrame.new(0, 5.6 * s, -1 * s), Color = purple })
+	-- Arms with purple gloves
+	for _, side in { -1, 1 } do
+		add(model, { Name = "Arm", Size = Vector3.new(1, 3.2, 1) * s, CFrame = CFrame.new(side * 2.1 * s, 5.2 * s, -0.3 * s) * CFrame.Angles(math.rad(-35), 0, 0), Color = coat })
+		add(model, { Name = "Glove", Size = Vector3.new(1.1, 1, 1.1) * s, CFrame = CFrame.new(side * 2.1 * s, 3.9 * s, -1.3 * s), Color = purple })
+	end
+	-- Head, goggles, grin, hair
+	add(model, { Name = "Head", Size = Vector3.new(2.2, 2.2, 2.2) * s, CFrame = CFrame.new(0, 8.2 * s, 0), Color = skin })
+	add(model, { Name = "GoggleStrap", Size = Vector3.new(2.3, 0.45, 2.3) * s, CFrame = CFrame.new(0, 8.5 * s, 0), Color = Color3.fromRGB(40, 40, 40) })
+	for _, side in { -0.5, 0.5 } do
+		add(model, { Name = "Goggle", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.4, 0.9, 0.9) * s, CFrame = CFrame.new(side * s, 8.5 * s, -1.15 * s) * CFrame.Angles(0, math.rad(90), 0), Color = Color3.fromRGB(120, 255, 90), Material = Enum.Material.Neon })
+	end
+	add(model, { Name = "Grin", Size = Vector3.new(1.3, 0.25, 0.1) * s, CFrame = CFrame.new(0, 7.6 * s, -1.12 * s), Color = Color3.fromRGB(20, 20, 20) })
+	for i = -2, 2 do
+		add(model, { Name = "Hair", Class = "WedgePart", Size = Vector3.new(0.5, 1.4, 1.2) * s, CFrame = CFrame.new(i * 0.45 * s, 9.9 * s, 0.1 * s) * CFrame.Angles(math.rad(i * 8), 0, math.rad(i * 12)), Color = purple })
+	end
+	-- The Brainrot-catching net
+	local pole = add(model, { Name = "NetPole", Size = Vector3.new(0.3, 5, 0.3) * s, CFrame = CFrame.new(2.4 * s, 6 * s, -2 * s) * CFrame.Angles(math.rad(-40), 0, 0), Color = Color3.fromRGB(120, 90, 60) })
+	pole.Name = "Bat" -- the chaser swings its "Bat" part
+	add(model, { Name = "NetRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 2.6, 2.6) * s, CFrame = CFrame.new(2.4 * s, 8.3 * s, -4 * s) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(230, 230, 230), Transparency = 0.3 })
+
+	model.WorldPivot = CFrame.identity
+	return model
+end
+
 -- A floating name tag above a model.
 function ModelFactory.NameTag(model: Model, text: string, color: Color3?, height: number?)
 	local root = model.PrimaryPart

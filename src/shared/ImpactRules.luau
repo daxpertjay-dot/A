@@ -20,8 +20,7 @@ export type Result = {
 
 local ImpactRules = {}
 
--- `crashSpeedBonus` lowers the speed needed to smash tier 2 walls (buddy perk).
-function ImpactRules.Resolve(tier: number, collisionDamage: number, speed: number, boostActive: boolean, shieldActive: boolean, crashSpeedBonus: number?): Result
+function ImpactRules.Resolve(tier: number, collisionDamage: number, speed: number, boostActive: boolean, shieldActive: boolean): Result
 	if shieldActive then
 		if tier <= 2 then
 			return { outcome = "Absorbed", damage = math.huge }
@@ -33,7 +32,7 @@ function ImpactRules.Resolve(tier: number, collisionDamage: number, speed: numbe
 	if tier <= 1 then
 		return { outcome = "Smash", damage = math.huge }
 	elseif tier == 2 then
-		if boostActive or speed >= Config.Destruction.CrashThroughSpeed - (crashSpeedBonus or 0) then
+		if boostActive or speed >= Config.Destruction.CrashThroughSpeed then
 			return { outcome = "CrashThrough", damage = math.huge }
 		end
 		return { outcome = "Bump", damage = collisionDamage }
@@ -61,42 +60,17 @@ end
 
 -- The jump's shape at a given forward speed. Coin arcs are generated from
 -- this so a jump always sweeps straight through them.
-export type JumpProfile = { apex: number, airTime: number, length: number, gravity: number }
+export type JumpProfile = { apex: number, airTime: number, length: number }
 
-function ImpactRules.JumpProfile(speed: number, gravityScale: number?): JumpProfile
-	local gravity = Config.Run.Gravity * (gravityScale or 1)
-	local v = Config.Run.JumpVelocity
+function ImpactRules.JumpProfile(speed: number, jumpScale: number?): JumpProfile
+	local gravity = Config.Run.Gravity
+	local v = Config.Run.JumpVelocity * (jumpScale or 1)
 	local airTime = 2 * v / gravity
 	return {
 		apex = v * v / (2 * gravity),
 		airTime = airTime,
 		length = speed * airTime,
-		gravity = gravity,
 	}
-end
-
--- How long a head start cannon flight lasts, and how high it goes.
-function ImpactRules.LaunchProfile(meters: number): (number, number)
-	local duration = math.clamp(1.4 + meters / 500, 1.6, 4.6)
-	local height = math.clamp(30 + meters * 0.05, 35, 110)
-	return duration, height
-end
-
--- Weighted cannon spin. Returns the outcome index.
-function ImpactRules.RollHeadStart(rng: Random): number
-	local outcomes = Config.HeadStart.Outcomes
-	local total = 0
-	for _, o in outcomes do
-		total += o.weight
-	end
-	local roll = rng:NextNumber() * total
-	for i, o in outcomes do
-		if roll < o.weight then
-			return i
-		end
-		roll -= o.weight
-	end
-	return #outcomes
 end
 
 return ImpactRules

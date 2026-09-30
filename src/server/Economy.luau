@@ -1,129 +1,105 @@
 --!strict
--- Lobby progression systems: buying/opening crates, the equipment loadout,
--- daily rewards and Robux purchases.
+-- What coins are for (Subway Surfers style): power-up upgrades, more
+-- Brainrot pedestals (a higher score multiplier ceiling) and hoverboards.
+-- Also daily rewards and Robux purchases.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Config = require(Shared.Config)
-local CrateData = require(Shared.CrateData)
 local DailyRewardData = require(Shared.DailyRewardData)
-local EquipmentData = require(Shared.EquipmentData)
+local PowerUpData = require(Shared.PowerUpData)
 local Remotes = require(Shared.Remotes)
 
 local PlayerData = require(script.Parent.PlayerData)
 
 local Economy = {}
 
-local rng = Random.new()
-
 local COIN_PACKS = {
 	CoinPackSmall = 2500,
 	CoinPackLarge = 12000,
 }
+local ROBUX_HOVERBOARDS = 5
+local COIN_HOVERBOARD_BUNDLE = 1
 
--- Hooks the run system registers so Robux revives can resume a run.
+-- Hook the run system registers so Robux revives can resume a run.
 Economy.OnReviveProductPurchased = nil :: ((player: Player) -> boolean)?
-Economy.OnHeadStartPurchased = nil :: ((player: Player) -> boolean)?
 
 local function notify(player: Player, text: string, color: Color3?)
 	Remotes.Event("Notify"):FireClient(player, text, color)
 end
 
-local function productIdFor(key: string?): number
-	if not key then
-		return 0
-	end
+local function productIdFor(key: string): number
 	return (Config.DeveloperProducts :: any)[key] or 0
 end
 
--- Rolls and grants one item from a crate, returning the reveal the client
--- animates.
-local function rollCrate(player: Player, crateId: string)
-	local profile = PlayerData.Get(player)
-	local item = CrateData.Roll(crateId, rng)
-	if not profile or not item then
-		return { ok = false, message = "Crate was empty?!" }
+-- Next pedestal price, or nil when the base is full.
+function Economy.NextPedestalCost(pedestals: number): number?
+	if pedestals >= Config.Score.MaxPedestals then
+		return nil
 	end
-	local isNew = (profile.Inventory[item.id] or 0) == 0
-	PlayerData.GrantItem(player, item.id)
-	return {
-		ok = true,
-		crateId = crateId,
-		itemId = item.id,
-		isNew = isNew,
-		level = EquipmentData.LevelFromCount(profile.Inventory[item.id]),
-	}
+	return Config.Score.PedestalCosts[pedestals - Config.Score.StartingPedestals + 1]
 end
 
--- Coins: buy AND open on the spot. Robux: prompts the purchase; the crate
--- opens as soon as the receipt is processed (CrateRevealed).
-local function buyCrate(player: Player, crateId: any, currency: any)
-	if type(crateId) ~= "string" then
-		return { ok = false, message = "Unknown crate" }
-	end
-	local crate = CrateData.Get(crateId)
+local function buyUpgrade(player: Player, powerUpId: any)
 	local profile = PlayerData.Get(player)
-	if not crate or not profile then
-		return { ok = false, message = "Unknown crate" }
+	local powerUp = if type(powerUpId) == "string" then PowerUpData.Get(powerUpId) else nil
+	if not profile or not powerUp then
+		return { ok = false, message = "Unknown power-up" }
 	end
+	local level = profile.Upgrades[powerUp.id] or 0
+	local cost = PowerUpData.NextCost(level)
+	if not cost then
+		return { ok = false, message = "Already maxed out!" }
+	end
+	if profile.Coins < cost then
+		return { ok = false, message = "Not enough coins!" }
+	end
+	profile.Coins -= cost
+	profile.Upgrades[powerUp.id] = level + 1
+	PlayerData.Changed(player)
+	return { ok = true, level = level + 1, duration = PowerUpData.Duration(powerUp.id, level + 1) }
+end
 
+local function buyPedestal(player: Player)
+	local profile = PlayerData.Get(player)
+	if not profile then
+		return { ok = false }
+	end
+	local cost = Economy.NextPedestalCost(profile.Pedestals)
+	if not cost then
+		return { ok = false, message = "Your base is full!" }
+	end
+	if profile.Coins < cost then
+		return { ok = false, message = "Not enough coins!" }
+	end
+	profile.Coins -= cost
+	profile.Pedestals += 1
+	PlayerData.Changed(player)
+	return { ok = true, pedestals = profile.Pedestals }
+end
+
+local function buyHoverboards(player: Player, currency: any)
+	local profile = PlayerData.Get(player)
+	if not profile then
+		return { ok = false }
+	end
 	if currency == "Robux" then
-		local productId = productIdFor(crate.productKey)
+		local productId = productIdFor("Hoverboards")
 		if productId == 0 then
 			return { ok = false, message = "Robux purchases aren't set up yet" }
 		end
 		MarketplaceService:PromptProductPurchase(player, productId)
 		return { ok = true, pending = true }
 	end
-
-	if profile.Coins < crate.coinPrice then
+	if profile.Coins < Config.Economy.HoverboardCost then
 		return { ok = false, message = "Not enough coins!" }
 	end
-	profile.Coins -= crate.coinPrice
-	return rollCrate(player, crate.id)
-end
-
--- Opens a crate the player already owns (daily rewards, run vaults).
-local function openCrate(player: Player, crateId: any)
-	if type(crateId) ~= "string" then
-		return { ok = false, message = "Unknown crate" }
-	end
-	local profile = PlayerData.Get(player)
-	if not profile or (profile.Crates[crateId] or 0) <= 0 then
-		return { ok = false, message = "You don't have that crate." }
-	end
-	profile.Crates[crateId] -= 1
-	return rollCrate(player, crateId)
-end
-
-local function equipItem(player: Player, slot: any, itemId: any)
-	local profile = PlayerData.Get(player)
-	if not profile or type(slot) ~= "number" then
-		return { ok = false }
-	end
-	slot = math.floor(slot)
-	if slot < 1 or slot > PlayerData.UnlockedSlots(player) then
-		return { ok = false, message = "That slot is locked. Complete more runs!" }
-	end
-	if itemId == nil or itemId == "" then
-		profile.Loadout[slot] = ""
-		PlayerData.Changed(player)
-		return { ok = true }
-	end
-	if type(itemId) ~= "string" or (profile.Inventory[itemId] or 0) <= 0 then
-		return { ok = false, message = "You don't own that equipment" }
-	end
-	-- An item can only sit in one slot.
-	for i, existing in profile.Loadout do
-		if existing == itemId then
-			profile.Loadout[i] = ""
-		end
-	end
-	profile.Loadout[slot] = itemId
+	profile.Coins -= Config.Economy.HoverboardCost
+	profile.Hoverboards += COIN_HOVERBOARD_BUNDLE
 	PlayerData.Changed(player)
-	return { ok = true }
+	return { ok = true, hoverboards = profile.Hoverboards }
 end
 
 local function claimDaily(player: Player)
@@ -135,7 +111,6 @@ local function claimDaily(player: Player)
 	if profile.Daily.LastClaimDay == today then
 		return { ok = false, message = "Come back tomorrow!" }
 	end
-
 	local streak = if profile.Daily.LastClaimDay == today - 1 then profile.Daily.Streak + 1 else 1
 	if streak > #DailyRewardData.Rewards then
 		streak = 1
@@ -143,31 +118,14 @@ local function claimDaily(player: Player)
 	local reward = DailyRewardData.Rewards[streak]
 	profile.Daily.LastClaimDay = today
 	profile.Daily.Streak = streak
-
-	local grantedItem: string? = nil
 	if reward.kind == "Coins" then
-		profile.Coins += reward.amount or 0
-	elseif reward.kind == "Crate" then
-		profile.Crates[reward.crateId or "Common"] = (profile.Crates[reward.crateId or "Common"] or 0) + 1
-	elseif reward.kind == "Equipment" then
-		local pool = EquipmentData.ByRarity(reward.rarity or "Rare")
-		local item = pool[rng:NextInteger(1, #pool)]
-		PlayerData.GrantItem(player, item.id)
-		grantedItem = item.id
+		profile.Coins += reward.amount
+	else
+		profile.Hoverboards += reward.amount
 	end
 	PlayerData.Changed(player)
 	notify(player, ("🎁 DAY %d: %s %s"):format(reward.day, reward.icon, reward.label), Color3.fromRGB(255, 220, 90))
-	return { ok = true, day = reward.day, itemId = grantedItem }
-end
-
-local function setBuddy(player: Player, brainrotId: any)
-	local profile = PlayerData.Get(player)
-	if not profile or type(brainrotId) ~= "string" or (profile.Brainrots[brainrotId] or 0) <= 0 then
-		return { ok = false, message = "You don't own that Brainrot yet!" }
-	end
-	profile.Buddy = brainrotId
-	PlayerData.Changed(player)
-	return { ok = true }
+	return { ok = true, day = reward.day }
 end
 
 local function buyCoinPack(player: Player, key: any)
@@ -184,39 +142,34 @@ end
 
 -- Grants a developer product. Returns true when the grant succeeded.
 local function grantProduct(player: Player, productId: number): boolean
-	local products = Config.DeveloperProducts :: any
-	for _, crate in CrateData.Crates do
-		if crate.productKey and products[crate.productKey] == productId then
-			local reveal = rollCrate(player, crate.id)
-			if reveal.ok then
-				Remotes.Event("CrateRevealed"):FireClient(player, reveal)
-			end
-			return reveal.ok
-		end
-	end
 	for key, amount in COIN_PACKS do
-		if products[key] == productId then
+		if productIdFor(key) == productId then
 			PlayerData.AddCoins(player, amount)
 			notify(player, ("🪙 +%d coins!"):format(amount), Color3.fromRGB(255, 220, 90))
 			return true
 		end
 	end
-	if products.Revive == productId and Economy.OnReviveProductPurchased then
-		return Economy.OnReviveProductPurchased(player)
+	if productIdFor("Hoverboards") == productId then
+		local profile = PlayerData.Get(player)
+		if profile then
+			profile.Hoverboards += ROBUX_HOVERBOARDS
+			PlayerData.Changed(player)
+			notify(player, ("🛹 +%d hoverboards!"):format(ROBUX_HOVERBOARDS), Color3.fromRGB(140, 220, 255))
+			return true
+		end
 	end
-	if products.HeadStart == productId and Economy.OnHeadStartPurchased then
-		return Economy.OnHeadStartPurchased(player)
+	if productIdFor("Revive") == productId and Economy.OnReviveProductPurchased then
+		return Economy.OnReviveProductPurchased(player)
 	end
 	return false
 end
 
 function Economy.Init()
-	Remotes.Function("BuyCrate").OnServerInvoke = buyCrate
-	Remotes.Function("OpenCrate").OnServerInvoke = openCrate
-	Remotes.Function("EquipItem").OnServerInvoke = equipItem
+	Remotes.Function("BuyUpgrade").OnServerInvoke = buyUpgrade
+	Remotes.Function("BuyPedestal").OnServerInvoke = buyPedestal
+	Remotes.Function("BuyHoverboards").OnServerInvoke = buyHoverboards
 	Remotes.Function("ClaimDaily").OnServerInvoke = claimDaily
 	Remotes.Function("BuyCoinPack").OnServerInvoke = buyCoinPack
-	Remotes.Function("SetBuddy").OnServerInvoke = setBuddy
 
 	MarketplaceService.ProcessReceipt = function(receipt)
 		local player = Players:GetPlayerByUserId(receipt.PlayerId)

@@ -16,7 +16,6 @@ local CollectionService = game:GetService("CollectionService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
-local CrateData = require(Shared.CrateData)
 local ModelFactory = require(Shared.ModelFactory)
 local Util = require(Shared.Util)
 
@@ -224,27 +223,26 @@ local function buildHub()
 	spawnLocation.Neutral = true
 	spawnLocation.Parent = lobby
 
-	-- Giant blocky Sahur statue next to spawn
-	local statue = ModelFactory.Brainrot(BrainrotData.ChaserId, 3.2)
-	statue.Name = "SahurStatue"
+	-- Giant statue of the villain with a WANTED sign
+	local statue = ModelFactory.Villain(2.6)
+	statue.Name = "VillainStatue"
 	part({ Name = "StatueBase", Size = Vector3.new(14, 3, 14), CFrame = CFrame.new(at(0, 2.3, -22)), Color = Color3.fromRGB(150, 150, 160) })
-	statue:PivotTo(CFrame.new(at(0, 3.8, -22)))
+	statue:PivotTo(CFrame.lookAt(at(0, 3.8, -22), at(0, 3.8, 0)))
 	statue.Parent = lobby
-	tag(statue, "LobbyDance", { Style = "Bonk" })
+	tag(statue, "LobbyDance", { Style = "Sway" })
+	LobbyBuilder.Sign(lobby, at(0, 3.3, -14.4), at(0, 3.3, 0), ("WANTED: %s\nhe kidnapped the Brainrots!"):format(Config.Villain.Title), Color3.fromRGB(200, 40, 40), 12, 3)
 
 	-- Title sign across the street
 	LobbyBuilder.Sign(lobby, at(0, 30, 16), at(0, 30, 100), "🧠 BRAINROT RUNNER 🧠", COLORS.Bright[1], 44, 9, 25)
 
-	-- 📦 Crate shop: walk up to a crate, buy it and it opens right there.
-	local crateCf = stall(at(0, 0.8, 50), at(0, 0.8, 0), "📦 CRATE SHOP", COLORS.Bright[5])
-	for i, crate in CrateData.Crates do
-		local standCf = crateCf * CFrame.new((i - 2) * 8, 0, -6)
-		local box = part({ Name = "Crate_" .. crate.id, Size = Vector3.new(4, 4, 4), CFrame = standCf * CFrame.new(0, 7, 0), Color = crate.color, Material = Enum.Material.Neon, Studs = false })
-		tag(box, "LobbySpin", { Speed = 1 + i * 0.3 })
-		tag(box, "LobbyFloat", { Phase = i, Amplitude = 0.5 })
-		local price = if crate.robuxLabel then ("🪙 %s · %s"):format(Util.FormatNumber(crate.coinPrice), crate.robuxLabel) else ("🪙 " .. Util.FormatNumber(crate.coinPrice))
-		Util.Billboard(box, ("%s\n%s"):format(crate.name, price), UDim2.fromOffset(180, 60), Vector3.new(0, 4, 0), crate.color)
-		LobbyBuilder.Prompt(box, "Buy & Open", crate.name, "Crates", crate.id)
+	-- ⬆️ Upgrade shop: spend coins on power-ups, pedestals and hoverboards.
+	local upgradeCf = stall(at(0, 0.8, 50), at(0, 0.8, 0), "⬆️ UPGRADES", COLORS.Bright[5])
+	for i, icon in { "🧲", "🚀", "👟", "✖️2" } do
+		local standCf = upgradeCf * CFrame.new((i - 2.5) * 6, 0, -6)
+		local orb = part({ Name = "UpgradeOrb", Shape = Enum.PartType.Ball, Size = Vector3.new(3, 3, 3), CFrame = standCf * CFrame.new(0, 7, 0), Color = COLORS.Bright[i + 1], Material = Enum.Material.Neon, Studs = false })
+		tag(orb, "LobbyFloat", { Phase = i, Amplitude = 0.6 })
+		Util.Billboard(orb, icon, UDim2.fromOffset(60, 60), Vector3.new(0, 3, 0))
+		LobbyBuilder.Prompt(orb, "Upgrade", "Power-ups", "Upgrades")
 	end
 
 	-- 🛒 Coin shop

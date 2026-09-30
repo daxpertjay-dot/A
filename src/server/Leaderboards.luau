@@ -17,11 +17,11 @@ local Leaderboards = {}
 export type Entry = { rank: number, name: string, value: number }
 
 Leaderboards.Categories = {
-	{ stat = "BestDistance", title = "🏆 TOP RUNS", suffix = "m" },
+	{ stat = "HighScore", title = "🏆 HIGH SCORES", suffix = "" },
+	{ stat = "BestDistance", title = "📏 FURTHEST RUNS", suffix = "m" },
+	{ stat = "BrainrotsRescued", title = "🧠 BRAINROTS RESCUED", suffix = "" },
 	{ stat = "TotalCoins", title = "🪙 MOST COINS", suffix = "" },
 	{ stat = "TotalRuns", title = "🏃 MOST RUNS", suffix = "" },
-	{ stat = "LongestSurvival", title = "⏱️ LONGEST SURVIVAL", suffix = "s" },
-	{ stat = "EquipmentCollected", title = "⚡ EQUIPMENT COLLECTED", suffix = "" },
 }
 
 local TOP_N = 10

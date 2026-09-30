@@ -2,7 +2,7 @@
 -- Custom endless-runner camera: behind and above the runner, locked to the
 -- run direction, smoothly following lane changes, partially following jumps,
 -- with a subtle speed-based FOV and impact shake. Also plays the short
--- (≈2.6s) Tung Tung Tung Sahur intro shot at the start of every run.
+-- (≈2.6s) villain intro shot at the start of every run.
 --
 --                    CAMERA 📷
 --                        \
@@ -40,9 +40,10 @@ local function chaseCFrame(dt: number): CFrame
 	-- Sideways: follow the lane smoothly.
 	camX = Util.Lerp(camX, runner.X, Util.Damp(CAM.LaneFollowSharpness, dt))
 	-- Vertical: follow the ground level (train roofs) and part of each jump.
-	local launched = state.move == "Launched"
-	local groundY = if state.grounded or launched then runner.Y else camBaseY
-	camBaseY = Util.Lerp(camBaseY, groundY, Util.Damp(if launched then 10 else CAM.VerticalSharpness, dt))
+	-- While flying (jetpack) the camera rises with you.
+	local flying = state.move == "Flying"
+	local groundY = if state.grounded or flying then runner.Y else camBaseY
+	camBaseY = Util.Lerp(camBaseY, groundY, Util.Damp(if flying then 3 else CAM.VerticalSharpness, dt))
 	local jumpOffset = (runner.Y - camBaseY) * CAM.VerticalFollow
 
 	local position = Vector3.new(camX, camBaseY + CAM.Height + jumpOffset, runner.Z + CAM.Distance)
@@ -57,7 +58,7 @@ local function chaseCFrame(dt: number): CFrame
 	return CFrame.lookAt(position, lookAt)
 end
 
--- Intro: swing around in front of the runner to show Sahur appearing behind
+-- Intro: swing around in front of the runner to show the villain appearing behind
 -- them, then settle into the chase camera.
 local function introCFrame(dt: number, t: number): CFrame
 	local runner = RunController.WorldPosition()

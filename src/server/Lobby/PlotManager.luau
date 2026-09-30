@@ -2,11 +2,11 @@
 -- Player bases. Every player gets their own plot on the street:
 --
 --   back   ┌────────────────────────────┐
---          │  🏃 START RUN (your portal) │  ← mini run area
---          │  ║ lane ║ lane ║ lane ║     │
---          │ [🧠][🧠][🧠][🧠]            │  ← Brainrot pedestals (earn coins/sec)
---          │ [🧠][🧠][🧠][🧠]            │
---          │ 💰collect  🤝buddy  ⚙️⚙️⚙️   │  ← collect pad · run buddy · equipment
+--          │  🏃 START RUN (your portal) │  ← mini run lane
+--          │  🏆 high score              │
+--          │ [🧠][🧠][🧠][🔒][🔒]         │  ← rescued Brainrots on pedestals:
+--          │ [🧠][🧠][🧠][🔒][🔒]         │     each adds to your SCORE MULTIPLIER
+--          │   ⭐ SCORE MULTIPLIER x7     │
 --   front  └──────── "Jay's BASE" ──────┘  ← faces the street
 --
 -- Plot local space: -Z points at the street, +X runs along it.
@@ -17,7 +17,6 @@ local Players = game:GetService("Players")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
-local EquipmentData = require(Shared.EquipmentData)
 local ModelFactory = require(Shared.ModelFactory)
 local Remotes = require(Shared.Remotes)
 local Util = require(Shared.Util)
@@ -38,11 +37,8 @@ type Plot = {
 	owner: Player?,
 	signLabel: TextLabel,
 	bestLabel: TextLabel,
-	padLabel: TextLabel,
-	pad: BasePart,
+	multiplierLabel: TextLabel,
 	pedestals: { CFrame },
-	stands: { BasePart },
-	buddyPad: BasePart,
 	trigger: BasePart,
 	color: Color3,
 	signature: string,
@@ -109,36 +105,18 @@ local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
 	local beam = part({ Parent = folder, Name = "ArchBeam", Size = Vector3.new(22, 4, 2), CFrame = cf * CFrame.new(0, y + 15, -D / 2), Color = color:Lerp(Color3.new(0, 0, 0), 0.25) })
 	local signLabel = Util.SurfaceLabel(beam, Enum.NormalId.Front, "EMPTY PLOT", { PixelsPerStud = 20 })
 
-	-- 💰 Collect pad
-	local pad = part({ Parent = folder, Name = "CollectPad", Size = Vector3.new(9, 1, 9), CFrame = cf * CFrame.new(-20, y + 0.5, -30), Color = Color3.fromRGB(80, 220, 90), Material = Enum.Material.Neon, Studs = false })
-	pad.CanTouch = true
-	local padLabel = Util.Billboard(pad, "💰 COLLECT", UDim2.fromOffset(220, 70), Vector3.new(0, 5, 0), Color3.fromRGB(140, 255, 140))
+	-- ⭐ Big score multiplier sign facing the entrance
+	local multiplierLabel = LobbyBuilder.Sign(folder, (cf * CFrame.new(0, y + 9, -30)).Position, (cf * CFrame.new(0, y + 9, -60)).Position, "⭐ SCORE MULTIPLIER x1", Color3.fromRGB(255, 190, 0), 26, 5, 6.5)
 
-	-- 🤝 Run buddy pad
-	local buddyPad = part({ Parent = folder, Name = "BuddyPad", Size = Vector3.new(8, 1, 8), CFrame = cf * CFrame.new(0, y + 0.5, -28), Color = Color3.fromRGB(255, 255, 255) })
-	LobbyBuilder.Prompt(buddyPad, "Change Buddy", "Run Buddy", "Brainrots")
-
-	-- 🧠 Brainrot pedestals (2 rows of 4)
+	-- 🧠 Brainrot pedestals (2 rows of 5). Locked ones can be bought with coins.
 	local pedestals = {}
-	for _, z in { -12, 4 } do
-		for _, x in { -21, -7, 7, 21 } do
+	for _, z in { -18, -4 } do
+		for _, x in { -24, -12, 0, 12, 24 } do
 			local pedestal = part({ Parent = folder, Name = "Pedestal", Size = Vector3.new(7, 2, 7), CFrame = cf * CFrame.new(x, y + 1, z), Color = Color3.fromRGB(245, 245, 245) })
 			part({ Parent = folder, Name = "PedestalTrim", Size = Vector3.new(7.4, 0.4, 7.4), CFrame = pedestal.CFrame * CFrame.new(0, 1.1, 0), Color = color:Lerp(Color3.new(0, 0, 0), 0.2) })
 			table.insert(pedestals, cf * CFrame.new(x, y + 2.3, z))
 		end
 	end
-
-	-- ⚙️ Equipment stands (your loadout on display)
-	local stands = {}
-	for i, x in { 15, 21.5, 28 } do
-		local stand = part({ Parent = folder, Name = "EquipmentStand", Size = Vector3.new(4.5, 4, 4.5), CFrame = cf * CFrame.new(x, y + 2, -30), Color = Color3.fromRGB(90, 90, 110) })
-		local holo = part({ Parent = folder, Name = "EquipmentHolo", Size = Vector3.new(2.5, 2.5, 2.5), CFrame = stand.CFrame * CFrame.new(0, 4, 0), Color = Color3.fromRGB(120, 220, 255), Material = Enum.Material.ForceField, CanCollide = false, Studs = false })
-		CollectionService:AddTag(holo, "LobbySpin")
-		holo:SetAttribute("Speed", 1.5)
-		stand:SetAttribute("Slot", i)
-		table.insert(stands, stand)
-	end
-	LobbyBuilder.Prompt(stands[2], "Equipment", "Your Loadout", "Loadout")
 
 	-- 🏃 Mini run area: a little 3-lane track leading to your own run portal.
 	local trackCf = cf * CFrame.new(0, y, 27)
@@ -158,8 +136,8 @@ local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
 		CollectionService:AddTag(coin, "LobbySpin")
 		coin:SetAttribute("Speed", 3)
 	end
-	-- Best-distance sign beside the track
-	local bestLabel = LobbyBuilder.Sign(folder, (cf * CFrame.new(-21, y + 7, 24)).Position, (cf * CFrame.new(-21, y + 7, 0)).Position, "🏆 BEST: 0m", Color3.fromRGB(255, 170, 0), 12, 4, 5)
+	-- High score sign beside the track
+	local bestLabel = LobbyBuilder.Sign(folder, (cf * CFrame.new(-21, y + 7, 24)).Position, (cf * CFrame.new(-21, y + 7, 0)).Position, "🏆 HIGH SCORE: 0", Color3.fromRGB(255, 170, 0), 14, 4, 5)
 
 	-- The portal
 	for _, sx in { -12, 12 } do
@@ -184,11 +162,8 @@ local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
 		owner = nil,
 		signLabel = signLabel,
 		bestLabel = bestLabel,
-		padLabel = padLabel,
-		pad = pad,
+		multiplierLabel = multiplierLabel,
 		pedestals = pedestals,
-		stands = stands,
-		buddyPad = buddyPad,
 		trigger = trigger,
 		color = color,
 		signature = "",
@@ -210,14 +185,7 @@ local function refresh(plot: Plot)
 	local profile = if owner then PlayerData.Get(owner) else nil
 	local displayed = if profile then PlayerData.DisplayedBrainrots(profile) else {}
 	local signature = if owner and profile
-		then table.concat({
-			owner.Name,
-			table.concat(displayed, ","),
-			profile.Buddy,
-			table.concat(profile.Loadout, ","),
-			tostring(PlayerData.UnlockedSlots(owner)),
-			tostring(math.floor(profile.Stats.BestDistance)),
-		}, "|")
+		then table.concat({ owner.Name, table.concat(displayed, ","), tostring(profile.Pedestals), tostring(math.floor(profile.Stats.HighScore)) }, "|")
 		else ""
 	if signature == plot.signature then
 		return
@@ -226,64 +194,36 @@ local function refresh(plot: Plot)
 	plot.dynamic:ClearAllChildren()
 
 	plot.signLabel.Text = if owner then ("%s's BASE"):format(owner.DisplayName) else "EMPTY PLOT"
-	plot.bestLabel.Text = if profile then ("🏆 BEST: %sm"):format(Util.FormatNumber(profile.Stats.BestDistance)) else "🏆 BEST: -"
+	plot.bestLabel.Text = if profile then ("🏆 HIGH SCORE: %s"):format(Util.FormatNumber(profile.Stats.HighScore)) else "🏆 HIGH SCORE: -"
+	plot.multiplierLabel.Text = if profile then ("⭐ SCORE MULTIPLIER x%d"):format(PlayerData.Multiplier(profile)) else "⭐ SCORE MULTIPLIER"
 	plot.trigger:SetAttribute("OwnerUserId", if owner then owner.UserId else 0)
 	if not owner or not profile then
-		plot.padLabel.Text = "💰 COLLECT"
-		for _, stand in plot.stands do
-			local gui = stand:FindFirstChild("Billboard")
-			if gui then
-				gui:Destroy()
-			end
-		end
 		return
 	end
 
-	-- Brainrots on pedestals, each showing what it earns.
 	for i, pedestalCf in plot.pedestals do
 		local id = displayed[i]
-		local data = if id then BrainrotData.Get(id) else nil
+		local data = BrainrotData.Get(id)
 		if data then
+			-- A rescued Brainrot showing the multiplier it adds.
 			local model = ModelFactory.Brainrot(data.id, 0.9)
 			model:PivotTo(pedestalCf)
 			model.Parent = plot.dynamic
 			CollectionService:AddTag(model, "LobbyDance")
 			model:SetAttribute("Style", "Hop")
-			label(model, ("%s %s\n+%s/s"):format(data.icon, data.name, Util.FormatNumber(data.income)), BrainrotData.RarityColors[data.rarity], 9)
+			label(model, ("%s %s\n+%dx SCORE"):format(data.icon, data.name, data.bonus), BrainrotData.RarityColors[data.rarity], 9)
 		else
-			local marker = part({ Parent = plot.dynamic, Name = "EmptySlot", Size = Vector3.new(1, 1, 1), CFrame = pedestalCf, Transparency = 1, CanCollide = false, Studs = false })
-			label(marker, "EMPTY\ncatch Brainrots in runs!", Color3.fromRGB(200, 200, 200), 3)
+			local marker = part({ Parent = plot.dynamic, Name = "SlotMarker", Size = Vector3.new(6.6, 0.2, 6.6), CFrame = pedestalCf * CFrame.new(0, -0.15, 0), Transparency = 0.5, CanCollide = false, Studs = false, Color = Color3.fromRGB(255, 255, 255) })
+			if i <= profile.Pedestals then
+				label(marker, "EMPTY\nrescue Brainrots on runs!", Color3.fromRGB(210, 210, 210), 3)
+			else
+				-- Locked: buy it at the upgrade shop / Upgrades button.
+				marker.Color = Color3.fromRGB(60, 60, 70)
+				marker.Transparency = 0.1
+				label(marker, "🔒 LOCKED PEDESTAL\nbuy more in ⬆️ Upgrades", Color3.fromRGB(255, 200, 90), 3)
+				LobbyBuilder.Prompt(marker, "Buy Pedestal", "Locked", "Upgrades")
+			end
 		end
-	end
-
-	-- The run buddy stands on its pad.
-	local buddy = BrainrotData.Get(profile.Buddy)
-	if buddy then
-		local model = ModelFactory.Brainrot(buddy.id, 1.1)
-		model:PivotTo(plot.buddyPad.CFrame * CFrame.new(0, 0.5, 0))
-		model.Parent = plot.dynamic
-		CollectionService:AddTag(model, "LobbyDance")
-		model:SetAttribute("Style", "Twirl")
-		label(model, ("🤝 RUN BUDDY\n%s"):format(buddy.perkText), Color3.fromRGB(255, 240, 140), 11)
-	end
-
-	-- Equipment stands show the loadout.
-	local unlocked = PlayerData.UnlockedSlots(owner)
-	for i, stand in plot.stands do
-		local old = stand:FindFirstChild("Billboard")
-		if old then
-			old:Destroy()
-		end
-		local item = EquipmentData.Get(profile.Loadout[i])
-		local text, color
-		if i > unlocked then
-			text, color = ("🔒 SLOT %d\n%d runs"):format(i, Config.LoadoutSlotUnlocks[i]), Color3.fromRGB(180, 180, 180)
-		elseif item then
-			text, color = ("%s\n%s"):format(item.icon, item.name), EquipmentData.RarityColors[item.rarity]
-		else
-			text, color = ("➕ SLOT %d"):format(i), Color3.fromRGB(230, 230, 230)
-		end
-		Util.Billboard(stand, text, UDim2.fromOffset(150, 60), Vector3.new(0, 8, 0), color)
 	end
 end
 
@@ -316,7 +256,7 @@ local function assign(player: Player)
 			playerPlot[player] = plot
 			refresh(plot)
 			PlotManager.SendHome(player)
-			notify(player, "🏠 This is your base! Brainrots you catch earn coins here.", Color3.fromRGB(140, 255, 140))
+			notify(player, "🏠 This is your base! Rescued Brainrots here boost your score multiplier.", Color3.fromRGB(140, 255, 140))
 			return
 		end
 	end
@@ -365,36 +305,6 @@ function PlotManager.Init()
 	end
 
 	Remotes.Event("GoToBase").OnServerEvent:Connect(PlotManager.SendHome)
-
-	-- Collect pads: step on your own pad to bank what your Brainrots earned.
-	local padDebounce: { [Player]: number } = {}
-	for _, plot in plots do
-		plot.pad.Touched:Connect(function(hit)
-			local character = hit:FindFirstAncestorOfClass("Model")
-			local player = character and Players:GetPlayerFromCharacter(character)
-			if not player or player ~= plot.owner or (padDebounce[player] or 0) > os.clock() then
-				return
-			end
-			padDebounce[player] = os.clock() + 1
-			local amount = PlayerData.CollectIncome(player)
-			if amount > 0 then
-				notify(player, ("💰 +%s coins collected!"):format(Util.FormatNumber(amount)), Color3.fromRGB(140, 255, 140))
-			end
-		end)
-	end
-
-	-- Live "pending coins" display on every pad.
-	task.spawn(function()
-		while true do
-			task.wait(1)
-			for _, plot in plots do
-				local profile = if plot.owner then PlayerData.Get(plot.owner) else nil
-				if profile then
-					plot.padLabel.Text = ("💰 COLLECT\n%s  (+%s/s)"):format(Util.FormatNumber(profile.PendingIncome), Util.FormatNumber(PlayerData.IncomePerSecond(profile)))
-				end
-			end
-		end
-	end)
 end
 
 return PlotManager

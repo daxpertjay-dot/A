@@ -5,22 +5,20 @@ export type Reward = {
 	day: number,
 	label: string,
 	icon: string,
-	kind: "Coins" | "Crate" | "Equipment",
-	amount: number?,
-	crateId: string?,
-	rarity: string?, -- Equipment rewards roll a random item of this rarity
+	kind: "Coins" | "Hoverboard",
+	amount: number,
 }
 
 local DailyRewardData = {}
 
 DailyRewardData.Rewards = {
-	{ day = 1, label = "500", icon = "🪙", kind = "Coins", amount = 500 },
-	{ day = 2, label = "CRATE", icon = "📦", kind = "Crate", crateId = "Common" },
-	{ day = 3, label = "1,000", icon = "🪙", kind = "Coins", amount = 1000 },
-	{ day = 4, label = "EQUIPMENT", icon = "⚡", kind = "Equipment", rarity = "Rare" },
-	{ day = 5, label = "RARE CRATE", icon = "💎", kind = "Crate", crateId = "Rare" },
-	{ day = 6, label = "2,500", icon = "🪙", kind = "Coins", amount = 2500 },
-	{ day = 7, label = "SPECIAL ITEM", icon = "🎁", kind = "Equipment", rarity = "Legendary" },
+	{ day = 1, label = "200", icon = "🪙", kind = "Coins", amount = 200 },
+	{ day = 2, label = "1 BOARD", icon = "🛹", kind = "Hoverboard", amount = 1 },
+	{ day = 3, label = "500", icon = "🪙", kind = "Coins", amount = 500 },
+	{ day = 4, label = "2 BOARDS", icon = "🛹", kind = "Hoverboard", amount = 2 },
+	{ day = 5, label = "1,000", icon = "🪙", kind = "Coins", amount = 1000 },
+	{ day = 6, label = "3 BOARDS", icon = "🛹", kind = "Hoverboard", amount = 3 },
+	{ day = 7, label = "3,000", icon = "💰", kind = "Coins", amount = 3000 },
 } :: { Reward }
 
 -- Day index used for streak math (UTC days since epoch).

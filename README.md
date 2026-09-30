@@ -1,16 +1,16 @@
 # 🧠 Brainrot Runner
 
-A Roblox endless runner with a blocky, tycoon-style lobby (in the spirit of Steal a Brainrot and Grow a Garden). Every player gets their own base on the street. You catch Brainrots on runs; they earn coins on your base, and one of them runs with you as a buddy with perks. Meanwhile **Tung Tung Tung Sahur** chases you down a procedurally generated, destructible city.
+A Subway Surfers-style endless runner for Roblox. The evil **Verity** (with his henchman Tung Tung Tung Sahur) has kidnapped the Brainrots. You escape through his rail yard, grab coins and power-ups, and rescue caged Brainrots. Rescued Brainrots stand on your base and raise your **score multiplier**, and coins buy upgrades.
 
 ```
-JOIN → YOUR BASE (Brainrots earn coins · collect pad · buddy · equipment)
-     → walk into YOUR RUN PORTAL → "RUN STARTING..." → Sahur intro
-     → 🎯 HEAD START CANNON (optional spin) → 3… 2… 1… RUN! / FIRE!
-     → 🌿 Grasslands → 🏙️ Brainrot City → ❄️ Frozen Peaks → 🌋 Volcano → 🌌 Brainrot Void
-     → dodge / smash / CATCH BRAINROTS → caught → REVIVE or END → REWARDS → back to your base
+YOUR BASE (Brainrots on pedestals = ⭐ score multiplier)
+  → walk into YOUR RUN PORTAL → Verity bursts out of his factory → 3… 2… 1… RUN!
+  → dodge · jump · roll · grab 🪙 coins, 🧲🚀👟✖️2 power-ups, ❓ mystery boxes
+  → 🔓 rescue caged Brainrots → caught → SAVE ME (coins) or END
+  → RESULTS: score = meters × multiplier, coins, rescues → back to your base
 ```
 
-The whole game (lobby, plots, track segments, Brainrot models and UI) is built from code, so it runs in an empty place with no uploaded assets.
+Everything (lobby, bases, track, characters, UI) is built from code, so it runs in an empty place with no uploaded assets.
 
 ## Getting it into Roblox Studio
 
@@ -20,18 +20,16 @@ The whole game (lobby, plots, track segments, Brainrot models and UI) is built f
 rojo build default.project.json -o BrainrotRunner.rbxl
 ```
 
-Open `BrainrotRunner.rbxl` in Studio and press **Play**. To put it on an existing experience, use **File → Publish to Roblox As…** and pick your place.
+Open the file in Studio and press **Play**. To put it on your experience, use **File → Publish to Roblox As…** and choose your place.
 
-**Option B: live-sync into your existing place**
+**Option B: live-sync with Rojo**
 
-1. Install [Rojo](https://rojo.space) (CLI plus the Studio plugin).
-2. In this folder, run `rojo serve`.
-3. Open your place in Studio, go to **Plugins → Rojo → Connect**.
-4. Press **Play**. Edits to files in `src/` sync into Studio instantly.
+1. Install [Rojo](https://rojo.space) (the CLI plus the Studio plugin). VS Code is not needed.
+2. Run `rojo serve` in this folder.
+3. In Studio, go to **Plugins → Rojo → Connect**.
+4. Press **Play**.
 
-Live sync overwrites the synced containers: `ReplicatedStorage.Shared`, `ServerScriptService.Server` and `StarterPlayerScripts.Client`.
-
-To use DataStores and leaderboards in Studio, turn on **Game Settings → Security → Enable Studio Access to API Services**. Without it, the game falls back to session-only data.
+To use DataStores and leaderboards in Studio, turn on **Game Settings → Security → Enable Studio Access to API Services**.
 
 ## Controls (during a run)
 
@@ -40,158 +38,120 @@ To use DataStores and leaderboards in Studio, turn on **Game Settings → Securi
 | Change lane | A / D or ← / → | swipe left / right | D-pad / left stick |
 | Jump | W / ↑ / Space | swipe up | A |
 | Roll (fast-fall in the air) | S / ↓ | swipe down | B |
-| Equipment slot 1–3 | 1 / 2 / 3 | tap the buttons | X / Y / RB |
+| Hoverboard | E / Q | double-tap | X |
 
-In the lobby you walk around normally. Use the HUD buttons, or press **E** at stations.
+A jump instantly cancels a roll, and a jump pressed just before landing fires on touchdown.
+
+## How the game works
+
+### ⭐ Score & multiplier (the main goal)
+- **Score = meters run × score multiplier.** The leaderboard ranks high scores.
+- Your multiplier is **1 + the bonus of every Brainrot standing on your base**:
+
+| Rarity | Bonus |
+|---|---|
+| Uncommon | +1x |
+| Rare | +2x |
+| Epic | +3x |
+| Legendary | +5x |
+
+- Your base starts with **3 pedestals** and holds up to 10. Buying more pedestals with coins raises your multiplier ceiling.
+- The **✖️2 Score Booster** power-up doubles the multiplier while it lasts.
+
+### 🔓 Brainrots
+Verity keeps them in cages on the tracks; run through a cage to rescue it. Rarer Brainrots only appear further into a run:
+
+| Brainrot | Appears after |
+|---|---|
+| Chimpanzini | 0m |
+| Patapim | 100m |
+| Tralalero | 250m |
+| Ballerina | 400m |
+| Bombardiro | 700m |
+| Lirilì | 900m |
+| Bombombini | 1,200m |
+| Cappuccino Assassino | 1,600m |
+| Trippi Troppi | 2,200m |
+
+Rescues are kept even if you get caught. Your best Brainrots automatically take the pedestals.
+
+### 🪙 Coins (Subway Surfers style)
+- Every coin is worth **1**. A run earns a few hundred: coin lines between obstacles, arcs over barriers that match your jump exactly, and train-roof lines.
+- The big moments are the **🚀 Jetpack sky trail** (a hundred-plus coins) and **❓ Mystery Boxes** (100–1,500 coins or hoverboards).
+- Coins buy:
+  - **Power-up upgrades.** 5 levels each, making them last longer: 500 / 1,500 / 3,500 / 7,500 / 15,000 coins.
+  - **Pedestals.** 750 → 20,000 coins; this is how you raise your multiplier ceiling.
+  - **🛹 Hoverboards.** 300 each.
+  - **Revives.** "Save me", 200 coins, doubling each time.
+
+### ⚡ Power-ups (on the track)
+| Power-up | What it does | Level 0 → 5 |
+|---|---|---|
+| 🧲 Coin Magnet | pulls coins in | 10s → 20s |
+| 🚀 Jetpack | **fly** high over everything along a sky-coin trail, skipping that stretch | 6s → 12s |
+| 👟 Super Sneakers | huge jumps (onto trains) | 10s → 20s |
+| ✖️2 Score Booster | doubles your multiplier | 10s → 20s |
+
+A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It saves you from one crash by breaking instead.
+
+### The chase
+Crashes let **Verity** close in. Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run.
+
+### The track: Verity's Rail Yard
+One consistent night-time freight yard with deliberately clean lanes. The segment types are:
+- **Yard:** barriers and gantries.
+- **Trains:** switch lanes, or take the ramp and run the roofs.
+- **Factory halls.**
+- **Smash zones:** wooden walls you can crash through at speed.
+- **Bonus vaults:** a wall-sealed lane holding a mystery box.
+- **Rescue cages.**
+
+Destruction is still in: small things smash, wooden walls break at high speed, and concrete chips with repeated hits.
+
+### Lobby & your base
+- The lobby is a blocky street with a conveyor loop, an ⬆️ Upgrades stall, a shop, daily rewards, the leaderboard, and a statue of Verity (WANTED).
+- Your base has:
+  - your pedestals, with a big **SCORE MULTIPLIER** sign; locked pedestals can be bought right there
+  - your high score
+  - your personal run portal
+- The HUD buttons open everything from anywhere: Upgrades, Brainrots, Shop, Daily, Top, Stats, My Base.
 
 ## Project layout
 
 ```
 src/
 ├── shared/                    ReplicatedStorage.Shared
-│   ├── Config.luau            ← all tuning: speeds, camera, chase, destruction, prices
-│   ├── EquipmentData.luau     equipment catalog (Shield, Magnet, Speed Boost, Bomb, Coin Doubler)
-│   ├── CrateData.luau         crate prices + drop odds
-│   ├── BrainrotData.luau      Brainrots: income, buddy perks
-│   ├── BiomeData.luau         run biomes: look, lighting, twists, segments, catchable Brainrots
+│   ├── Config.luau            ← all tuning: villain, score, coins, prices, power-ups, speeds, camera
+│   ├── PowerUpData.luau       power-ups, durations per level, upgrade costs
+│   ├── BrainrotData.luau      Brainrots: multiplier bonus, rarity, where they appear
 │   ├── DailyRewardData.luau   7-day reward track
-│   ├── ImpactRules.luau       what happens when you hit things (shared client/server)
-│   ├── ModelFactory.luau      primitive Brainrot models (swap for meshes later)
-│   ├── Remotes.luau · Signal.luau · Util.luau
+│   ├── ImpactRules.luau       crash rules + jump physics (shared client/server)
+│   ├── ModelFactory.luau      blocky Brainrot + villain models
+│   └── Remotes.luau · Signal.luau · Util.luau
 ├── server/                    ServerScriptService.Server
 │   ├── Main.server.luau
-│   ├── PlayerData.luau        DataStore profiles, leaderstats
-│   ├── Economy.luau           crates, loadout, daily rewards, Robux receipts
-│   ├── Leaderboards.luau      OrderedDataStores + the giant lobby board
-│   ├── Lobby/LobbyBuilder.luau  blocky street, shops, conveyors, public run gate
-│   ├── Lobby/PlotManager.luau   player bases: pedestals, income pad, buddy, equipment, run portal
+│   ├── PlayerData.luau        profiles (coins, Brainrots, pedestals, upgrades, hoverboards, stats)
+│   ├── Economy.luau           upgrades, pedestals, hoverboards, daily, Robux receipts
+│   ├── Leaderboards.luau      high score + other global boards
+│   ├── Lobby/LobbyBuilder.luau  the street, stalls, conveyors, statue
+│   ├── Lobby/PlotManager.luau   player bases: pedestals, multiplier sign, run portal
 │   └── Run/
-│       ├── RunManager.luau    run lifecycle, validation, rewards
+│       ├── RunManager.luau    run lifecycle, score, power-ups, rescues, revive, results
 │       ├── TrackGenerator.luau  generates segments ahead / recycles behind
-│       ├── Segments.luau      segment library + obstacles
-│       └── Destruction.luau   health / tiers / damage states / explosions
+│       ├── Segments.luau      Verity's Rail Yard segment library
+│       └── Destruction.luau   breakable walls & debris
 └── client/                    StarterPlayerScripts.Client
     ├── Main.client.luau       lobby ⇄ run orchestration
-    ├── InputController.luau   Left / Right / Jump / Roll (+ swipes, gamepad)
-    ├── RunController.luau     Subway Surfers-style movement state machine + collisions
-    ├── RunCamera.luau         behind/above chase cam, FOV, shake, Sahur intro shot
-    ├── Chaser.luau            Tung Tung Tung Sahur
-    ├── Buddy.luau             your run buddy jogging beside you
-    ├── DebrisFX.luau          client-side debris + explosions
-    ├── LobbyFX.luau           spinning / dancing / wandering lobby life, conveyor stripes
+    ├── InputController.luau   lanes / jump / roll / hoverboard (+ swipes, gamepad)
+    ├── RunController.luau     movement state machine, power-ups, score, collisions
+    ├── RunCamera.luau         chase camera (follows jetpack flights)
+    ├── Chaser.luau            Verity + Sahur
+    ├── DebrisFX.luau · LobbyFX.luau
     └── UI/ (UIKit, LobbyUI, RunHUD)
 ```
 
-## How the main systems work
-
-### Lobby: street, conveyors and bases
-- `LobbyBuilder` builds a blocky street with classic studs (`Config.Lobby.UseStuds`). Down the middle are the 📦 crate shop, 🛒 shop, 🎁 daily reward, 🏆 leaderboard and a public run gate.
-- A **conveyor loop** runs around the street. The belts are anchored parts with a velocity, so they carry players; the moving yellow stripes are drawn client-side.
-- **Everything opens from anywhere** via the HUD buttons on the left (Crates, Gear, Brainrots, Shop, Daily, Top, Stats, My Base). The world stations open the same panels.
-- **Crates open where you buy them.** "BUY & OPEN" charges you and plays the reveal immediately. Crates you earned (daily, run vaults) open from the same panel.
-
-### Your base (`PlotManager`)
-Each player is assigned one of 8 plots, and you spawn there. A plot has:
-
-- **8 Brainrot pedestals.** Your best earners are displayed and each earns coins per second.
-- A **💰 collect pad.** Step on it to bank what they earned. You also get offline earnings at half speed, capped at 2h.
-- A **🤝 buddy pad.** Your chosen run buddy stands here; press E to change it.
-- **⚙️ Equipment stands** showing your loadout (press E to change it).
-- A **mini run lane** ending in your personal **🏃 START RUN portal**. Only the owner can use it.
-
-### Brainrots
-- **Catch them in runs.** Brainrot Special sections put a Brainrot inside a glowing ring in one lane; run through it to catch it. Each biome has its own Brainrots (see Biomes below), so the rare ones live deep in the run.
-- **Income.** They earn coins/sec on your base: Uncommon 3, Rare 8, Epic 20, Legendary 50.
-- **Run buddy.** Pick one in the Brainrots panel. It jogs beside you and grants its perk:
-
-| Brainrot | Perk |
-|---|---|
-| Tung Tung Tung Sahur | +2s head start |
-| Tralalero Tralala | always-on coin magnet |
-| Bombardiro Crocodilo | +1 charge on all equipment |
-| Ballerina Cappuccina | escape Sahur 40% faster |
-| Brr Brr Patapim | crashes cost 30% less |
-| Lirilì Larilà | start with a 6s shield |
-| Chimpanzini Bananini | +10% coins |
-| Cappuccino Assassino | smash wooden walls at lower speed |
-| Bombombini Gusini | +25% coins |
-| Trippi Troppi | big magnet + 15% coins |
-
-### Run controller (client)
-- The character is driven kinematically. Default controls are disabled, and the Humanoid is put in the `Physics` state.
-- The runner moves forward automatically along 3 fixed lanes at `x = -8 / 0 / 8`, sliding smoothly between them.
-- Jumping follows a fixed arc. Rolling shrinks the hitbox and plays a somersault. Pressing roll in the air fast-falls.
-- Jumping **instantly cancels a roll**. A jump pressed up to 0.18s before landing fires on touchdown (`Config.Run.JumpBuffer`).
-- Run and jump animations come from `Config.Animations`. A list of Roblox animation-pack IDs is in the comments there, so you can swap in any pack or your own uploads.
-- Movement states: `Running → Jumping → Falling → Running`, `Rolling → Running`, `Staggered`, `Caught`.
-- Speed follows `Config.Run.SpeedCurve` (45 → 48 → 52 → 58 → 70 studs/s at 0 / 500 / 1000 / 2000 / 5000 m).
-- Ground and obstacles are found with raycasts and box queries on dedicated collision groups (`RunGround`, `RunObstacle`). This lets the runner go up ramps, run across train roofs, and pass through scenery.
-
-### Biomes (`BiomeData`)
-The run is split into zones, Roll a Slime style. It gets stranger (and more rewarding) the further you go, and a gate announces each new biome.
-
-| Biome | Starts at | Coin value | Twist | Brainrots you can catch |
-|---|---|---|---|---|
-| 🌿 Grasslands | 0m | x1 | hay bales, fences, farm road | Chimpanzini, Patapim, Tralalero |
-| 🏙️ Brainrot City | 800m | x2 | traffic, trains, the full city set | Tralalero, Ballerina, Patapim, Bombardiro |
-| ❄️ Frozen Peaks | 1,800m | x3 | **slippery**: lane changes slide | Ballerina, Lirilì, Bombombini, Tralalero |
-| 🌋 Volcano | 3,000m | x5 | **lava pools**: jump them | Bombardiro, Bombombini, Cappuccino Assassino, Trippi Troppi |
-| 🌌 Brainrot Void | 4,500m | x8 | **low gravity**, floaty jumps | Cappuccino Assassino, Trippi Troppi, Lirilì, Bombardiro |
-
-Each biome sets its own road, ground, scenery, obstacle skins (ice walls, basalt, neon glass…), coin colour, segment mix and lighting (fog, ambient, time of day). The last biome goes on forever. To add a biome, add an entry to `src/shared/BiomeData.luau`.
-
-### Head start cannon
-- The cannon sits behind you in the starting area. After the Sahur intro you get about 7 seconds to spin it (🪙 250 or Robux) or press **RUN!**.
-- The spin is a slot-machine reel. The weighted outcomes are 150m, 250m, 400m, 600m, 900m, and a rare 1500m, all set in `Config.HeadStart`.
-- At the end of the countdown it's **FIRE!**: you're shot in a big tumbling arc down the track, the camera follows, and you land with 2s of invincibility.
-- The server builds the track up to the landing spot before you fire and accepts the flight in its distance checks.
-
-### Jumps and coin arcs
-- Coin arcs over jumpable obstacles are generated from the real jump physics: forward speed at that distance, jump power, and the biome's gravity.
-- Jumping at the start of an arc therefore always sweeps through every coin, even at high speed or in the Void's low gravity.
-- If you change `JumpVelocity` or `Gravity`, the coin arcs follow automatically.
-
-### Chase
-The gap to Tung Tung Tung Sahur is measured in seconds.
-
-- It starts at 10s and slowly recovers over time.
-- Crashes shrink it.
-- A 💣 bomb pushes him back.
-- When it drops into the danger zone, he appears right behind you with his bat.
-- When it hits 0 you're caught, and you can revive with coins (the cost doubles each time) or with Robux.
-
-### Procedural track (server)
-`TrackGenerator` keeps about 600 studs of track generated ahead and deletes segments that are 2 behind.
-
-It picks from a weighted library of segments, each with a minimum distance and a cooldown: Straight, Intersection, Alley, Construction, Parking Lot, Tunnel, Highway, Building, Ramp (trains you can run on), Destruction (vault), and Brainrot Special.
-
-Every obstacle row leaves at least one lane you can get through without breaking anything, and coin trails guide you through the gaps.
-
-### Destruction
-Destructible objects carry `Health`, `Tier`, `ExplosionResistance`, `CollisionDamage` and `DestructionEffect` attributes.
-
-| Tier | Examples | Running into it | Equipment |
-|---|---|---|---|
-| 1 Breakable | barricades, crate stacks, signs | smashes, you slow down a bit | any bomb |
-| 2 Heavy | wooden walls, cars | crash through at high speed (≥56 studs/s) or with ⚡ boost; otherwise bump and chip it | any bomb |
-| 3 Major | concrete walls | bump + chip (multiple hits break it) | 💣 Brainrot Bomb and up |
-| 4 Indestructible | steel barriers, pipes, trains | bump, change lanes! | — |
-
-- Walls are built from bricks. Damage knocks out the bricks nearest the impact, and destroyed objects leave rubble behind.
-- The server is authoritative, and debris is simulated only on the owning client (capped and cleaned up after 3s).
-- Your own crashes are predicted instantly on the client, so impacts feel immediate.
-- **Destruction vaults** are the alternate paths. The middle lane is sealed behind a 💥 BONUS wall, with a bonus crate, an equipment box and a coin line inside.
-
-### Equipment, crates, progression
-- Equipment is 14 items across 5 abilities and 3 rarities. Duplicates level an item up, which adds duration/radius and an extra charge at level 3.
-- The loadout has 3 slots, unlocked at 0, 5 and 20 runs.
-- Crates can be bought with coins or Robux. The opening animation is a slot-machine reel.
-- The daily reward is a 7-day streak. The Brainrot collection is unlocked by encountering Brainrots in special segments.
-- Five global leaderboards: Distance, Coins, Runs, Survival, Equipment.
-
 ## Things to set up
-
-- **Robux products**: create developer products and put their IDs in `Config.DeveloperProducts` (crates, coin packs, revive, **head start**). Robux buttons do nothing until then.
-- **Sounds**: add asset IDs to `Config.Sounds`. The game is silent until you do.
-- **Studs**: the lobby uses classic `Studs`/`Inlet` part surfaces. If your place doesn't show them, set `Config.Lobby.UseStuds = false` or swap in a stud texture.
-- **StreamingEnabled**: runs happen far from the lobby (X ≥ 6000). The server calls `RequestStreamAroundAsync` before teleporting, but if you see the track pop in, consider turning streaming off or raising the minimum streaming radius.
+- **The villain**: rename him in `Config.Villain`.
+- **Robux products**: put developer product IDs in `Config.DeveloperProducts` (coin packs, revive, hoverboards).
+- **Sounds**: add asset IDs to `Config.Sounds`.
+- **Animations**: swap run/jump animation IDs in `Config.Animations`.

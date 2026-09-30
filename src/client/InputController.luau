@@ -1,7 +1,8 @@
 --!strict
 -- Run input: exactly four movement actions (Left, Right, Jump, Roll) plus the
--- equipment slots. Keyboard (A/D/←/→, W/↑/Space, S/↓, 1-3), swipes on mobile,
--- and gamepad (D-pad / thumbstick flicks, A to jump, B to roll, X/Y/RB for equipment).
+-- hoverboard. Keyboard (A/D/←/→, W/↑/Space, S/↓, E for hoverboard), swipes
+-- and double-tap on mobile, gamepad (D-pad / stick flicks, A jump, B roll,
+-- X hoverboard).
 
 local UserInputService = game:GetService("UserInputService")
 
@@ -10,7 +11,7 @@ local Signal = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared
 local InputController = {}
 
 InputController.Action = Signal.new() -- ("Left" | "Right" | "Jump" | "Roll")
-InputController.Equipment = Signal.new() -- (slot: number)
+InputController.Hoverboard = Signal.new() -- ()
 
 local enabled = false
 
@@ -32,14 +33,13 @@ local KEYS: { [Enum.KeyCode]: string } = {
 	[Enum.KeyCode.DPadDown] = "Roll",
 }
 
-local EQUIP_KEYS: { [Enum.KeyCode]: number } = {
-	[Enum.KeyCode.One] = 1,
-	[Enum.KeyCode.Two] = 2,
-	[Enum.KeyCode.Three] = 3,
-	[Enum.KeyCode.ButtonX] = 1,
-	[Enum.KeyCode.ButtonY] = 2,
-	[Enum.KeyCode.ButtonR1] = 3,
+local HOVERBOARD_KEYS: { [Enum.KeyCode]: boolean } = {
+	[Enum.KeyCode.E] = true,
+	[Enum.KeyCode.Q] = true,
+	[Enum.KeyCode.ButtonX] = true,
 }
+local DOUBLE_TAP_TIME = 0.3
+local lastTap = 0
 
 local SWIPE_MIN_PIXELS = 40
 local touchStarts: { [InputObject]: Vector3 } = {}
@@ -69,9 +69,8 @@ function InputController.Init()
 			InputController.Action:Fire(action)
 			return
 		end
-		local slot = EQUIP_KEYS[input.KeyCode]
-		if slot then
-			InputController.Equipment:Fire(slot)
+		if HOVERBOARD_KEYS[input.KeyCode] then
+			InputController.Hoverboard:Fire()
 		end
 	end)
 
@@ -112,6 +111,16 @@ function InputController.Init()
 	end)
 
 	UserInputService.InputEnded:Connect(function(input)
+		-- A quick tap that didn't become a swipe: double-tap = hoverboard.
+		if enabled and touchStarts[input] then
+			local now = os.clock()
+			if now - lastTap < DOUBLE_TAP_TIME then
+				lastTap = 0
+				InputController.Hoverboard:Fire()
+			else
+				lastTap = now
+			end
+		end
 		touchStarts[input] = nil
 	end)
 end

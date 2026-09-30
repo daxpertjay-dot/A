@@ -9,9 +9,13 @@
 --
 -- Movement state machine:
 --   RUNNING ─┬─ JUMPING → FALLING → RUNNING
---            └─ ROLLING → RUNNING
+--            ├─ ROLLING → RUNNING
+--            └─ FLYING (🚀 jetpack) → FALLING → RUNNING
 --   RUNNING → HIT → STAGGERED → RUNNING
---   RUNNING → CAUGHT (Tung Tung Tung Sahur got you)
+--   RUNNING → CAUGHT (the villain got you)
+--
+-- Power-ups (🧲 magnet, 🚀 jetpack, 👟 super sneakers, ✖️2 booster) and the
+-- 🛹 hoverboard are confirmed by the server and applied here.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,7 +23,6 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
-local BiomeData = require(Shared.BiomeData)
 local ImpactRules = require(Shared.ImpactRules)
 local Remotes = require(Shared.Remotes)
 local Signal = require(Shared.Signal)
@@ -32,24 +35,11 @@ local RunController = {}
 
 local R = Config.Run
 local C = Config.Chase
+local P = Config.PowerUps
 local LANES = R.LanePositions
 
-export type Move = "Running" | "Jumping" | "Falling" | "Rolling" | "Staggered" | "Launched"
+export type Move = "Running" | "Jumping" | "Falling" | "Rolling" | "Staggered" | "Flying"
 export type Phase = "Idle" | "Intro" | "Running" | "Caught"
-
-export type LoadoutSlot = {
-	slot: number,
-	itemId: string,
-	name: string,
-	icon: string,
-	ability: string,
-	rarity: string,
-	level: number,
-	charges: number,
-	duration: number?,
-	radius: number?,
-	speedMultiplier: number?,
-}
 
 local state = {
 	phase = "Idle" :: Phase,
@@ -67,26 +57,25 @@ local state = {
 	laneT = 1,
 	rollTime = 0,
 	queuedRoll = false,
+	jumpBufferedUntil = 0,
 	staggerTime = 0,
 	speedFactor = 1,
 	speed = 0,
 	gap = C.StartGap,
 	invulnerableUntil = 0,
-	shieldUntil = 0,
-	boostUntil = 0,
-	boostMultiplier = 1,
+	-- Power-ups (os.clock() when they end) and their durations for the HUD bars
 	magnetUntil = 0,
-	magnetRadius = 0,
-	jumpBufferedUntil = 0,
-	biome = BiomeData.List[1] :: BiomeData.Biome,
-	-- Head start cannon flight
-	launch = nil :: { elapsed: number, duration: number, height: number, fromD: number, toD: number, fromY: number, toY: number }?,
-	perks = {} :: { [string]: number }, -- run buddy perk totals
-	buddy = "",
-	doublerUntil = 0,
+	jetpackUntil = 0,
+	sneakersUntil = 0,
+	boosterUntil = 0,
+	hoverUntil = 0,
+	durations = {} :: { [string]: number },
+	hoverboards = 0,
+	-- Score
+	multiplier = 1, -- from Brainrots on your base
+	score = 0,
 	coins = 0,
 	meters = 0,
-	loadout = {} :: { LoadoutSlot },
 	shake = 0,
 	elapsed = 0,
 }
@@ -95,11 +84,8 @@ RunController.State = state
 RunController.Caught = Signal.new()
 RunController.Impact = Signal.new() -- (outcome: string)
 RunController.CoinCollected = Signal.new()
-RunController.LoadoutChanged = Signal.new()
 RunController.Event = Signal.new() -- (message: string, color: Color3?)
-RunController.BrainrotCaught = Signal.new() -- (event)
-RunController.BiomeChanged = Signal.new() -- (biome)
-RunController.Landed = Signal.new() -- () cannon flight finished
+RunController.PowerUpStarted = Signal.new() -- (id: string)
 
 local player = Players.LocalPlayer
 local character: Model? = nil
@@ -107,6 +93,7 @@ local root: BasePart? = nil
 local humanoid: Humanoid? = nil
 local hipOffset = 3
 local trackFolder: Instance? = nil
+local board: BasePart? = nil
 
 -- Probe params are configured in Prepare(), once the server has registered
 -- the collision groups.
@@ -256,11 +243,24 @@ local function addShake(amount: number)
 end
 
 local function loseGap(amount: number)
-	state.gap -= amount * (1 - math.clamp(state.perks.BumpResist or 0, 0, 0.9))
+	state.gap -= amount
 end
 
 local function isRolling(): boolean
 	return state.rollTime > 0
+end
+
+local function isFlying(): boolean
+	return now() < state.jetpackUntil
+end
+
+local function onBoard(): boolean
+	return now() < state.hoverUntil
+end
+
+-- Current score multiplier: base (Brainrots) × 2 while the booster runs.
+function RunController.CurrentMultiplier(): number
+	return state.multiplier * (if now() < state.boosterUntil then 2 else 1)
 end
 
 local function probeGround(x: number, d: number, fromY: number): number?
@@ -280,7 +280,6 @@ end
 local function changeLane(dir: number)
 	local target = math.clamp(state.lane + dir, -1, 1)
 	if target == state.lane then
-		-- Bumping the edge of the track costs a little chase distance.
 		addShake(0.25)
 		return
 	end
@@ -294,24 +293,25 @@ local function changeLane(dir: number)
 end
 
 local function jump()
-	if state.move == "Staggered" then
+	if state.move == "Staggered" or isFlying() then
 		return
 	end
 	if not state.grounded then
 		-- Pressed a little early: jump the moment we land.
-		state.jumpBufferedUntil = os.clock() + R.JumpBuffer
+		state.jumpBufferedUntil = now() + R.JumpBuffer
 		return
 	end
 	-- Jumping instantly cancels a roll, so roll → jump chains are snappy.
 	state.rollTime = 0
 	state.queuedRoll = false
 	state.jumpBufferedUntil = 0
-	state.vy = R.JumpVelocity
+	local sneakers = now() < state.sneakersUntil
+	state.vy = R.JumpVelocity * (if sneakers then P.SneakersJumpMultiplier else 1)
 	state.grounded = false
 end
 
 local function roll()
-	if state.move == "Staggered" then
+	if state.move == "Staggered" or isFlying() then
 		return
 	end
 	state.jumpBufferedUntil = 0
@@ -339,23 +339,14 @@ local function onAction(action: string)
 	end
 end
 
-function RunController.UseEquipment(slot: number)
-	if state.phase ~= "Running" then
+function RunController.UseHoverboard()
+	if state.phase ~= "Running" or onBoard() or state.hoverboards <= 0 then
 		return
 	end
-	for _, entry in state.loadout do
-		if entry.slot == slot and entry.charges > 0 then
-			Remotes.Event("UseEquipment"):FireServer(slot)
-			return
-		end
-	end
+	Remotes.Event("UseHoverboard"):FireServer()
 end
 
 -- ───────────────────────────── collisions ─────────────────────────────
-
-local function predictBreak(obstacle: Instance, impact: Vector3, force: number)
-	DebrisFX.PredictBreak(obstacle, impact, force)
-end
 
 local function onObstacle(obstacle: Instance, part: BasePart)
 	local t = now()
@@ -379,38 +370,33 @@ local function onObstacle(obstacle: Instance, part: BasePart)
 	end
 
 	local tier = obstacle:GetAttribute("Tier") or 4
-	local result = ImpactRules.Resolve(
-		tier,
-		obstacle:GetAttribute("CollisionDamage") or 0,
-		state.speed,
-		t < state.boostUntil,
-		t < state.shieldUntil,
-		state.perks.CrashThrough
-	)
+	local result = ImpactRules.Resolve(tier, obstacle:GetAttribute("CollisionDamage") or 0, state.speed, false, onBoard())
 	local impact = Vector3.new(part.Position.X, bodyCenter().Y, part.Position.Z)
 	Remotes.Event("ReportHit"):FireServer(obstacle, { speed = state.speed, point = impact })
 
 	if result.outcome == "Smash" then
 		ignore[obstacle] = math.huge
-		predictBreak(obstacle, impact, state.speed)
+		DebrisFX.PredictBreak(obstacle, impact, state.speed)
 		state.speedFactor *= C.SlowdownOnSmallBreak
 		loseGap(C.GapLoss.SmallBreak)
 		addShake(0.5)
 	elseif result.outcome == "CrashThrough" then
 		ignore[obstacle] = math.huge
-		predictBreak(obstacle, impact, state.speed * 1.3)
+		DebrisFX.PredictBreak(obstacle, impact, state.speed * 1.3)
 		loseGap(C.GapLoss.CrashThrough)
 		addShake(1)
 		RunController.Event:Fire("💥 CRASH!", Color3.fromRGB(255, 160, 60))
 	elseif result.outcome == "Absorbed" then
+		-- 🛹 The hoverboard takes the hit and breaks.
 		ignore[obstacle] = math.huge
-		state.shieldUntil = 0
+		state.hoverUntil = 0
+		state.invulnerableUntil = t + P.HoverboardInvulnerability
 		if result.damage == math.huge then
-			predictBreak(obstacle, impact, state.speed * 1.3)
+			DebrisFX.PredictBreak(obstacle, impact, state.speed * 1.3)
 		end
-		addShake(0.6)
-		RunController.Event:Fire("🛡️ BLOCKED!", Color3.fromRGB(120, 200, 255))
-	else -- Bump: stopped / staggered, Sahur closes in
+		addShake(0.8)
+		RunController.Event:Fire("🛹 BOARD SMASHED — SAVED!", Color3.fromRGB(120, 200, 255))
+	else -- Bump: stopped / staggered, the villain closes in
 		ignore[obstacle] = t + C.StaggerTime
 		state.staggerTime = C.StaggerTime
 		state.speedFactor = 0
@@ -418,14 +404,13 @@ local function onObstacle(obstacle: Instance, part: BasePart)
 		state.d -= C.BumpPushback
 		loseGap(C.GapLoss.Bump)
 		addShake(1.3)
-		local message = if obstacle:GetAttribute("Kind") == "LavaPool" then "🔥 HOT HOT HOT! Jump the lava!" elseif tier >= 4 then "😵 OUCH!" else "😵 CRASH! (keep hitting it…)"
-		RunController.Event:Fire(message, Color3.fromRGB(255, 90, 90))
+		RunController.Event:Fire(if tier >= 4 then "😵 OUCH!" else "😵 CRASH! (keep hitting it…)", Color3.fromRGB(255, 90, 90))
 	end
 	RunController.Impact:Fire(result.outcome)
 end
 
 local function checkCollisions(prevD: number)
-	if not trackFolder or now() < state.invulnerableUntil then
+	if not trackFolder or now() < state.invulnerableUntil or isFlying() then
 		return
 	end
 	local h = if isRolling() then R.RollHitboxHeight else R.HitboxHeight
@@ -439,19 +424,19 @@ local function checkCollisions(prevD: number)
 		if obstacle and not seen[obstacle] then
 			seen[obstacle] = true
 			onObstacle(obstacle, part)
-			if state.move == "Staggered" or state.staggerTime > 0 then
+			if state.staggerTime > 0 then
 				break
 			end
 		end
 	end
 end
 
--- ───────────────────────────── coins / pickups / encounters ─────────────────────────────
+-- ───────────────────────────── coins / pickups ─────────────────────────────
 
 local function updateCollectibles(dt: number)
 	local center = bodyCenter()
 	local t = now()
-	local magnetRadius = math.max(state.perks.Magnet or 0, if t < state.magnetUntil then state.magnetRadius else 0)
+	local magnetRadius = if t < state.magnetUntil then P.MagnetRadius else 0
 	local spin = state.elapsed * 3
 
 	local i = 1
@@ -471,7 +456,7 @@ local function updateCollectibles(dt: number)
 				end
 				if distance < 3.4 then
 					coin.Transparency = 1
-					state.coins += (coin:GetAttribute("Value") or 1) * (if t < state.doublerUntil then 2 else 1) * (1 + (state.perks.CoinBonus or 0))
+					state.coins += coin:GetAttribute("Value") or 1
 					RunController.CoinCollected:Fire()
 					Remotes.Event("CollectCoin"):FireServer(coin)
 				else
@@ -490,8 +475,8 @@ local function updateCollectibles(dt: number)
 			pickups[#pickups] = nil
 		else
 			local pos = box.Position
-			local isBrainrot = box:GetAttribute("Pickup") == "Brainrot"
-			local reach = if isBrainrot then 5 else 4
+			local isCage = box:GetAttribute("Pickup") == "Brainrot"
+			local reach = if isCage then 5 else 4
 			if (pos - center).Magnitude < reach then
 				box.Transparency = 1
 				for _, d in box:GetDescendants() do
@@ -502,11 +487,32 @@ local function updateCollectibles(dt: number)
 					end
 				end
 				Remotes.Event("PickupItem"):FireServer(box)
-			elseif not isBrainrot then
+			elseif not isCage then
 				box.CFrame = CFrame.new(pos) * CFrame.Angles(0, spin * 0.7, 0)
 			end
 			i += 1
 		end
+	end
+end
+
+-- ───────────────────────────── hoverboard visual ─────────────────────────────
+
+local function setBoardVisible(visible: boolean)
+	if visible and not board then
+		local b = Instance.new("Part")
+		b.Name = "Hoverboard"
+		b.Size = Vector3.new(2.6, 0.35, 5.5)
+		b.Color = Color3.fromRGB(80, 200, 255)
+		b.Material = Enum.Material.Neon
+		b.Anchored = true
+		b.CanCollide = false
+		b.CanQuery = false
+		b.CanTouch = false
+		b.Parent = workspace
+		board = b
+	elseif not visible and board then
+		board:Destroy()
+		board = nil
 	end
 end
 
@@ -523,21 +529,24 @@ local function applyCharacter(xVelocity: number)
 		rollPitch = -math.pi * 2 * p
 		rollDrop = 1.4 * math.sin(math.pi * p)
 	end
-	if state.launch then
-		-- Tumbling through the air after the cannon.
-		rollPitch = -state.elapsed * 7
-	end
 	local stagger = if state.staggerTime > 0 then math.sin(state.staggerTime / C.StaggerTime * math.pi) * 0.35 else 0
 	local lean = math.clamp(-xVelocity * 0.006, -0.3, 0.3)
-	local pos = worldPosition() + Vector3.new(0, hipOffset - rollDrop, 0)
-	rootPart.CFrame = CFrame.new(pos) * CFrame.Angles(rollPitch + stagger, 0, lean)
+	local flyTilt = if state.move == "Flying" then -0.35 else 0
+	local boardLift = if onBoard() then 0.8 else 0
+	local pos = worldPosition() + Vector3.new(0, hipOffset - rollDrop + boardLift, 0)
+	rootPart.CFrame = CFrame.new(pos) * CFrame.Angles(rollPitch + stagger + flyTilt, 0, lean)
 	rootPart.AssemblyLinearVelocity = Vector3.new(xVelocity, state.vy, -state.speed)
 	rootPart.AssemblyAngularVelocity = Vector3.zero
+
+	setBoardVisible(onBoard() and state.phase == "Running")
+	if board then
+		board.CFrame = CFrame.new(worldPosition() + Vector3.new(0, 0.4, 0)) * CFrame.Angles(0, 0, lean)
+	end
 
 	-- Animation selection
 	if state.phase ~= "Running" then
 		playAnim("Idle")
-	elseif not state.grounded then
+	elseif state.move == "Flying" or not state.grounded then
 		if currentAnim ~= "Jump" then
 			playAnim("Jump")
 		end
@@ -567,40 +576,6 @@ local function update(dt: number)
 	end
 
 	local t = now()
-
-	-- 🎯 Cannon flight: a big scripted arc down the track, no collisions.
-	local launch = state.launch
-	if launch then
-		launch.elapsed += dt
-		local p = math.clamp(launch.elapsed / launch.duration, 0, 1)
-		state.d = launch.fromD + (launch.toD - launch.fromD) * p
-		state.feetY = launch.fromY + (launch.toY - launch.fromY) * p + 4 * launch.height * p * (1 - p)
-		state.vy = 0
-		state.speed = (launch.toD - launch.fromD) / launch.duration
-		state.meters = math.max(0, (state.d - state.startD) * R.MetersPerStud)
-		state.grounded = false
-		state.move = "Launched"
-		if p >= 1 then
-			state.launch = nil
-			state.grounded = true
-			state.move = "Running"
-			state.speedFactor = 1
-			state.invulnerableUntil = t + Config.HeadStart.LandingInvulnerability
-			state.gap = math.max(state.gap, C.StartGap + (state.perks.StartGap or 0))
-			addShake(1.2)
-			RunController.Landed:Fire()
-		end
-		applyCharacter(0)
-		return
-	end
-
-	-- Biome effects (slippery ice, floaty void)
-	local biome = BiomeData.At(state.meters)
-	if biome ~= state.biome then
-		state.biome = biome
-		RunController.BiomeChanged:Fire(biome)
-	end
-
 	-- Timers
 	if state.staggerTime > 0 then
 		state.staggerTime = math.max(0, state.staggerTime - dt)
@@ -614,53 +589,67 @@ local function update(dt: number)
 	if state.staggerTime <= 0 then
 		state.speedFactor = math.min(1, state.speedFactor + C.SpeedRecoveryPerSecond * dt)
 	end
-	local boost = if t < state.boostUntil then state.boostMultiplier else 1
-	state.speed = ImpactRules.SpeedAt(state.meters) * state.speedFactor * boost
+	local flying = isFlying()
+	state.speed = ImpactRules.SpeedAt(state.meters) * state.speedFactor * (if flying then P.JetpackSpeedMultiplier else 1)
 	local prevD = state.d
 	state.d += state.speed * dt
+
+	-- Score: meters × multiplier (mirrors the server, which is authoritative).
+	local gained = math.max(0, state.d - prevD) * R.MetersPerStud * Config.Score.PointsPerMeter
+	state.score += gained * RunController.CurrentMultiplier()
 
 	-- Lane interpolation
 	local prevX = state.x
 	if state.laneT < 1 then
-		state.laneT = math.min(1, state.laneT + dt / (R.LaneChangeTime * state.biome.laneChangeScale))
+		state.laneT = math.min(1, state.laneT + dt / R.LaneChangeTime)
 	end
 	local s = state.laneT * state.laneT * (3 - 2 * state.laneT)
 	state.x = Util.Lerp(LANES[state.fromLane], LANES[state.lane], s)
 	local xVelocity = (state.x - prevX) / math.max(dt, 1e-4)
 
-	-- Vertical movement against the ground
-	state.vy -= R.Gravity * state.biome.gravityScale * dt
-	state.feetY += state.vy * dt
-	local ground = probeGround(state.x, state.d, math.max(state.feetY, state.feetY - state.vy * dt) + 3.5)
-	state.groundY = ground or -math.huge
-	if ground and state.vy <= 0 and state.feetY <= ground + 0.05 then
-		state.feetY = ground
+	if flying then
+		-- 🚀 Cruise high above the track; nothing down there can touch you.
+		state.feetY = Util.Lerp(state.feetY, P.JetpackHeight, Util.Damp(4, dt))
 		state.vy = 0
-		local justLanded = not state.grounded
-		state.grounded = true
-		if justLanded and os.clock() < state.jumpBufferedUntil then
-			jump()
-		elseif justLanded and state.queuedRoll then
-			state.rollTime = R.RollDuration
-		end
-		state.queuedRoll = false
-	elseif ground and state.grounded and state.feetY - ground < 1.2 and state.vy <= 0 then
-		-- Stick to slopes going down (ramps) instead of hopping off them.
-		state.feetY = ground
-		state.vy = 0
-	else
 		state.grounded = false
-	end
-
-	-- Movement state
-	if state.staggerTime > 0 then
-		state.move = "Staggered"
-	elseif isRolling() then
-		state.move = "Rolling"
-	elseif not state.grounded then
-		state.move = if state.vy > 0 then "Jumping" else "Falling"
+		state.rollTime = 0
+		state.move = "Flying"
+		-- Keep a little invulnerability for the landing.
+		state.invulnerableUntil = math.max(state.invulnerableUntil, state.jetpackUntil + P.JetpackLandingInvulnerability)
 	else
-		state.move = "Running"
+		-- Vertical movement against the ground
+		state.vy -= R.Gravity * dt
+		state.feetY += state.vy * dt
+		local ground = probeGround(state.x, state.d, math.max(state.feetY, state.feetY - state.vy * dt) + 3.5)
+		state.groundY = ground or -math.huge
+		if ground and state.vy <= 0 and state.feetY <= ground + 0.05 then
+			state.feetY = ground
+			state.vy = 0
+			local justLanded = not state.grounded
+			state.grounded = true
+			if justLanded and t < state.jumpBufferedUntil then
+				jump()
+			elseif justLanded and state.queuedRoll then
+				state.rollTime = R.RollDuration
+			end
+			state.queuedRoll = false
+		elseif ground and state.grounded and state.feetY - ground < 1.2 and state.vy <= 0 then
+			-- Stick to slopes going down (ramps) instead of hopping off them.
+			state.feetY = ground
+			state.vy = 0
+		else
+			state.grounded = false
+		end
+
+		if state.staggerTime > 0 then
+			state.move = "Staggered"
+		elseif isRolling() then
+			state.move = "Rolling"
+		elseif not state.grounded then
+			state.move = if state.vy > 0 then "Jumping" else "Falling"
+		else
+			state.move = "Running"
+		end
 	end
 
 	checkCollisions(prevD)
@@ -668,7 +657,7 @@ local function update(dt: number)
 
 	-- Chase pressure
 	if state.staggerTime <= 0 then
-		state.gap = math.min(C.MaxGap, state.gap + C.RecoverPerSecond * (1 + (state.perks.GapRecovery or 0)) * dt)
+		state.gap = math.min(C.MaxGap, state.gap + C.RecoverPerSecond * dt)
 	end
 	if state.feetY < -40 then
 		state.gap = 0
@@ -677,6 +666,7 @@ local function update(dt: number)
 		state.gap = 0
 		state.phase = "Caught"
 		state.speed = 0
+		state.hoverUntil = 0
 		RunController.Caught:Fire()
 		Remotes.Event("ReportCaught"):FireServer()
 	end
@@ -708,21 +698,20 @@ function RunController.Prepare(info: any): boolean
 	state.lane, state.fromLane, state.laneT = 0, 0, 1
 	state.rollTime, state.staggerTime = 0, 0
 	state.queuedRoll = false
+	state.jumpBufferedUntil = 0
 	state.speedFactor = 1
 	state.speed = 0
-	state.perks = info.perks or {}
-	state.buddy = info.buddy or ""
-	state.gap = C.StartGap + (state.perks.StartGap or 0)
-	state.jumpBufferedUntil = 0
-	state.launch = nil
-	state.biome = BiomeData.At(0)
+	state.gap = C.StartGap
 	state.invulnerableUntil = 0
-	state.shieldUntil, state.boostUntil, state.magnetUntil, state.doublerUntil = 0, 0, 0, 0
+	state.magnetUntil, state.jetpackUntil, state.sneakersUntil, state.boosterUntil, state.hoverUntil = 0, 0, 0, 0, 0
+	table.clear(state.durations)
+	state.hoverboards = info.hoverboards or 0
+	state.multiplier = info.multiplier or 1
+	state.score = 0
 	state.coins = 0
 	state.meters = 0
 	state.elapsed = 0
 	state.shake = 0
-	state.loadout = info.loadout
 	table.clear(ignore)
 	table.clear(coins)
 	table.clear(pickups)
@@ -732,40 +721,17 @@ function RunController.Prepare(info: any): boolean
 	end
 	table.insert(connections, (info.trackFolder :: Instance).DescendantAdded:Connect(register))
 	table.insert(connections, InputController.Action:Connect(onAction) :: any)
-	table.insert(connections, InputController.Equipment:Connect(RunController.UseEquipment) :: any)
+	table.insert(connections, InputController.Hoverboard:Connect(RunController.UseHoverboard) :: any)
 
 	RunService:BindToRenderStep("BrainrotRunController", Enum.RenderPriority.Input.Value + 1, update)
 	InputController.SetEnabled(true)
 	return true
 end
 
--- GO! With a head start the cannon fires you `headStart` meters down the track.
-function RunController.Go(headStart: number?)
-	if state.phase ~= "Intro" then
-		return
-	end
-	state.phase = "Running"
-	state.speedFactor = 0.5 -- quick burst off the line
-	if state.perks.StartShield then
-		state.shieldUntil = os.clock() + state.perks.StartShield
-		RunController.Event:Fire("🛡️ BUDDY SHIELD!", Color3.fromRGB(120, 200, 255))
-	end
-	if headStart and headStart > 0 then
-		local duration, height = ImpactRules.LaunchProfile(headStart)
-		local toD = state.startD + headStart / R.MetersPerStud
-		local landingY = probeGround(0, toD, 60) or 0
-		state.lane, state.fromLane, state.laneT, state.x = 0, 0, 1, 0
-		state.rollTime = 0
-		state.launch = {
-			elapsed = 0,
-			duration = duration,
-			height = height,
-			fromD = state.d,
-			toD = toD,
-			fromY = state.feetY,
-			toY = landingY,
-		}
-		addShake(1.8)
+function RunController.Go()
+	if state.phase == "Intro" then
+		state.phase = "Running"
+		state.speedFactor = 0.5 -- quick burst off the line
 	end
 end
 
@@ -778,55 +744,42 @@ function RunController.Revive()
 	RunController.Event:Fire("💪 REVIVED!", Color3.fromRGB(140, 255, 140))
 end
 
--- Server-confirmed world/equipment events.
+-- Server-confirmed events.
 function RunController.HandleWorldEvent(event: any)
 	local t = now()
-	if event.type == "EquipmentUsed" then
-		for _, entry in state.loadout do
-			if entry.slot == event.slot then
-				entry.charges = event.charges
-			end
+	if event.type == "PowerUp" then
+		local until_ = t + event.duration
+		state.durations[event.id] = event.duration
+		if event.id == "Magnet" then
+			state.magnetUntil = until_
+			RunController.Event:Fire("🧲 COIN MAGNET!", Color3.fromRGB(255, 120, 120))
+		elseif event.id == "Jetpack" then
+			state.jetpackUntil = until_
+			state.rollTime = 0
+			RunController.Event:Fire("🚀 JETPACK!", Color3.fromRGB(255, 190, 60))
+		elseif event.id == "SuperSneakers" then
+			state.sneakersUntil = until_
+			RunController.Event:Fire("👟 SUPER SNEAKERS!", Color3.fromRGB(120, 255, 140))
+		elseif event.id == "ScoreBooster" then
+			state.boosterUntil = until_
+			RunController.Event:Fire(("✖️2 SCORE BOOSTER! (x%d)"):format(state.multiplier * 2), Color3.fromRGB(110, 190, 255))
 		end
-		local ability = event.ability
-		if ability == "Shield" then
-			state.shieldUntil = t + event.duration
-			RunController.Event:Fire("🛡️ SHIELD UP!", Color3.fromRGB(120, 200, 255))
-		elseif ability == "Magnet" then
-			state.magnetUntil = t + event.duration
-			state.magnetRadius = event.radius or 20
-			RunController.Event:Fire("🧲 MAGNET!", Color3.fromRGB(255, 120, 120))
-		elseif ability == "SpeedBoost" then
-			state.boostUntil = t + event.duration
-			state.boostMultiplier = event.multiplier or 1.3
-			RunController.Event:Fire("⚡ SPEED BOOST!", Color3.fromRGB(255, 240, 80))
-		elseif ability == "CoinDoubler" then
-			state.doublerUntil = t + event.duration
-			RunController.Event:Fire("🪙 DOUBLE COINS!", Color3.fromRGB(255, 210, 60))
-		elseif ability == "Bomb" then
-			state.gap = math.min(C.MaxGap, state.gap + C.BombPushback)
-			addShake(1.6)
-			DebrisFX.Explosion(event.center, event.radius)
-			RunController.Event:Fire("💣 BOOM!", Color3.fromRGB(255, 120, 40))
+		RunController.PowerUpStarted:Fire(event.id)
+	elseif event.type == "Hoverboard" then
+		state.hoverUntil = t + event.duration
+		state.durations.Hoverboard = event.duration
+		state.hoverboards = event.left
+		RunController.Event:Fire("🛹 HOVERBOARD!", Color3.fromRGB(120, 200, 255))
+	elseif event.type == "HoverboardBroken" then
+		state.hoverUntil = 0
+	elseif event.type == "MysteryBox" then
+		local text = if event.kind == "Coins" then ("❓ MYSTERY BOX: 🪙 %d!"):format(event.amount) else ("❓ MYSTERY BOX: 🛹 x%d!"):format(event.amount)
+		if event.kind == "Coins" then
+			state.coins += event.amount
 		end
-		RunController.LoadoutChanged:Fire()
-	elseif event.type == "ShieldUsed" then
-		state.shieldUntil = 0
-	elseif event.type == "Charges" then
-		for _, entry in state.loadout do
-			if entry.slot == event.slot then
-				entry.charges = event.charges
-				RunController.Event:Fire(("%s +1 CHARGE!"):format(entry.icon), Color3.fromRGB(200, 140, 255))
-			end
-		end
-		RunController.LoadoutChanged:Fire()
-	elseif event.type == "BrainrotCaught" then
-		RunController.Event:Fire(("%s CAUGHT %s!"):format(event.icon, string.upper(event.name)), Color3.fromRGB(255, 140, 230))
-		RunController.BrainrotCaught:Fire(event)
-	elseif event.type == "CrateFound" then
-		RunController.Event:Fire("📦 BONUS CRATE FOUND!", Color3.fromRGB(255, 190, 40))
-	elseif event.type == "BonusCoins" then
-		state.coins += event.amount * (1 + (state.perks.CoinBonus or 0))
-		RunController.Event:Fire(("🪙 +%d"):format(event.amount), Color3.fromRGB(255, 210, 60))
+		RunController.Event:Fire(text, Color3.fromRGB(255, 200, 60))
+	elseif event.type == "BrainrotRescued" then
+		RunController.Event:Fire(("🔓 RESCUED %s %s! (+%dx multiplier)"):format(event.icon, string.upper(event.name), event.bonus), Color3.fromRGB(255, 140, 230))
 	end
 end
 
@@ -844,6 +797,7 @@ function RunController.Stop()
 	table.clear(tracks)
 	currentAnim = ""
 	trackFolder = nil
+	setBoardVisible(false)
 end
 
 -- World-space position of the runner (for the camera and the chaser).

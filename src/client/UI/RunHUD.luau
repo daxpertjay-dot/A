@@ -1,8 +1,13 @@
 --!strict
--- Everything on screen during a run: the "RUN STARTING..." fade, the
--- starting-area prep card, the Sahur intro caption, 3 → 2 → 1 → RUN!, the
--- distance/coins HUD, the chase meter, equipment buttons, the revive screen
--- and the rewards screen.
+-- Everything on screen during a run (Subway Surfers layout):
+--
+--   top-left: distance · high score      top-right: SCORE + xMULTIPLIER, coins
+--   top-centre: how close the villain is
+--   right side: active power-up timers    bottom-right: 🛹 hoverboard button
+--
+-- Plus the "RUN STARTING..." fade, countdown, revive screen and results.
+-- Panels are built once in Init and only updated afterwards, so showing
+-- them repeatedly can't stack up layouts.
 
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -10,7 +15,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Config = require(Shared.Config)
-local EquipmentData = require(Shared.EquipmentData)
+local PowerUpData = require(Shared.PowerUpData)
 local Remotes = require(Shared.Remotes)
 local Util = require(Shared.Util)
 
@@ -26,25 +31,37 @@ local fade: Frame
 local fadeText: TextLabel
 local bigText: TextLabel
 local eventText: TextLabel
-local distanceLabel: TextLabel
+local scoreLabel: TextLabel
+local multiplierBadge: TextLabel
 local coinsLabel: TextLabel
-local bestLabel: TextLabel
+local distanceLabel: TextLabel
+local highLabel: TextLabel
 local chaseFill: Frame
 local chaseLabel: TextLabel
-local equipmentBar: Frame
-local effectsLabel: TextLabel
-local prepCard: Frame
-local caughtPanel: Frame
-local resultsPanel: Frame
+local powerBars: Frame
+local hoverButton: TextButton
+local tipLabel: TextLabel
 local updateConnection: RBXScriptConnection? = nil
-local bestDistance = 0
-local equipmentButtons: { [number]: TextButton } = {}
+local highScore = 0
+
+-- Revive panel pieces (built once)
+local caughtPanel: Frame
+local caughtScore: TextLabel
+local caughtTimer: TextLabel
+local caughtTimerFill: Frame
+local reviveCoinsButton: TextButton
+local reviveRobuxButton: TextButton
+local caughtToken = 0
+
+-- Results panel pieces (built once)
+local resultsPanel: Frame
+local resultsBody: Frame
 
 local function tweenIn(instance: GuiObject)
 	UIKit.Pop(instance)
 end
 
--- ───────────────────────────── fade ─────────────────────────────
+-- ───────────────────────────── fade / text ─────────────────────────────
 
 function RunHUD.ShowStarting()
 	gui.Enabled = true
@@ -63,8 +80,6 @@ local function hideFade()
 		fade.Visible = false
 	end)
 end
-
--- ───────────────────────────── big text ─────────────────────────────
 
 function RunHUD.Big(text: string, color: Color3?, duration: number?)
 	bigText.Text = text
@@ -85,75 +100,65 @@ function RunHUD.Flash(text: string, color: Color3?)
 	eventText.Visible = true
 	tweenIn(eventText)
 	local shown = text
-	task.delay(1.1, function()
+	task.delay(1.4, function()
 		if eventText.Text == shown then
 			eventText.Visible = false
 		end
 	end)
 end
 
--- ───────────────────────────── equipment ─────────────────────────────
-
-local function rebuildEquipment()
-	UIKit.Clear(equipmentBar)
-	table.clear(equipmentButtons)
-	for _, entry in RunController.State.loadout do
-		local color = EquipmentData.RarityColors[entry.rarity] or C.PanelLight
-		local button = UIKit.Button({
-			Text = ("%s x%d"):format(entry.icon, entry.charges),
-			Size = UDim2.fromOffset(110, 70),
-			BackgroundColor3 = if entry.charges > 0 then color else C.PanelLight,
-			LayoutOrder = entry.slot,
-		}, function()
-			RunController.UseEquipment(entry.slot)
-		end)
-		local keyHint = if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then "" else ("[%d] "):format(entry.slot)
-		UIKit.Label({ Text = keyHint .. entry.name, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, 2), Parent = button })
-		button.Parent = equipmentBar
-		equipmentButtons[entry.slot] = button
-	end
-end
-
 -- ───────────────────────────── per-frame ─────────────────────────────
+
+local POWER_ORDER = { "Jetpack", "Magnet", "SuperSneakers", "ScoreBooster", "Hoverboard" }
+local barRows: { [string]: { frame: Frame, fill: Frame } } = {}
+
+local function powerRow(icon: string, color: Color3): { frame: Frame, fill: Frame }
+	local row = UIKit.New("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.2, Size = UDim2.new(1, 0, 0, 34), Visible = false, Parent = powerBars })
+	UIKit.Corner(10).Parent = row
+	UIKit.Label({ Text = icon, Size = UDim2.fromOffset(34, 34), Parent = row })
+	local track = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(30, 30, 40), Position = UDim2.fromOffset(40, 11), Size = UDim2.new(1, -48, 0, 12), Parent = row })
+	UIKit.Corner(6).Parent = track
+	local fill = UIKit.New("Frame", { BackgroundColor3 = color, Size = UDim2.fromScale(1, 1), Parent = track })
+	UIKit.Corner(6).Parent = fill
+	return { frame = row, fill = fill }
+end
 
 local function update()
 	local state = RunController.State
-	distanceLabel.Text = Util.FormatNumber(state.meters) .. "m"
+	local t = os.clock()
+	scoreLabel.Text = Util.FormatNumber(state.score)
+	local multiplier = RunController.CurrentMultiplier()
+	multiplierBadge.Text = "x" .. multiplier
+	multiplierBadge.BackgroundColor3 = if t < state.boosterUntil then Color3.fromRGB(80, 170, 255) else C.Accent
 	coinsLabel.Text = "🪙 " .. Util.FormatNumber(state.coins)
-	bestLabel.Text = if state.meters > bestDistance and bestDistance > 0 then "🏆 NEW BEST!" else ("🏆 " .. Util.FormatNumber(bestDistance) .. "m")
+	distanceLabel.Text = Util.FormatNumber(state.meters) .. "m"
+	highLabel.Text = if state.score > highScore and highScore > 0 then "🏆 NEW HIGH SCORE!" else ("🏆 " .. Util.FormatNumber(highScore))
 
 	local ratio = math.clamp(state.gap / Config.Chase.MaxGap, 0, 1)
 	chaseFill.Size = UDim2.fromScale(ratio, 1)
 	local danger = state.gap < Config.Chase.DangerGap
-	chaseFill.BackgroundColor3 = if danger then (if os.clock() % 0.3 < 0.15 then C.Bad else C.Gold) else C.Good
-	chaseLabel.Text = if danger then "🪵 TUNG TUNG TUNG!" else "🪵 SAHUR DISTANCE"
+	chaseFill.BackgroundColor3 = if danger then (if t % 0.3 < 0.15 then C.Bad else C.Gold) else C.Good
+	chaseLabel.Text = if danger then ("☣️ %s IS RIGHT BEHIND YOU!"):format(Config.Villain.Title) else ("☣️ %s"):format(Config.Villain.Title)
 
-	local t = os.clock()
-	local effects = {}
-	if t < state.shieldUntil then
-		table.insert(effects, ("🛡️ %.0fs"):format(state.shieldUntil - t))
-	end
-	if t < state.magnetUntil then
-		table.insert(effects, ("🧲 %.0fs"):format(state.magnetUntil - t))
-	end
-	if t < state.boostUntil then
-		table.insert(effects, ("⚡ %.0fs"):format(state.boostUntil - t))
-	end
-	if t < state.doublerUntil then
-		table.insert(effects, ("🪙x2 %.0fs"):format(state.doublerUntil - t))
-	end
-	if t < state.invulnerableUntil then
-		table.insert(effects, "✨ INVINCIBLE")
-	end
-	effectsLabel.Text = table.concat(effects, "   ")
-
-	for _, entry in state.loadout do
-		local button = equipmentButtons[entry.slot]
-		if button then
-			button.Text = ("%s x%d"):format(entry.icon, entry.charges)
-			button.BackgroundColor3 = if entry.charges > 0 then EquipmentData.RarityColors[entry.rarity] else C.PanelLight
+	local timers = {
+		Jetpack = state.jetpackUntil,
+		Magnet = state.magnetUntil,
+		SuperSneakers = state.sneakersUntil,
+		ScoreBooster = state.boosterUntil,
+		Hoverboard = state.hoverUntil,
+	}
+	for id, row in barRows do
+		local left = timers[id] - t
+		local duration = state.durations[id] or 1
+		row.frame.Visible = left > 0
+		if left > 0 then
+			row.fill.Size = UDim2.fromScale(math.clamp(left / duration, 0, 1), 1)
 		end
 	end
+
+	local canBoard = state.hoverboards > 0 and t >= state.hoverUntil
+	hoverButton.Text = ("🛹 x%d"):format(state.hoverboards)
+	hoverButton.BackgroundColor3 = if canBoard then Color3.fromRGB(80, 200, 255) else C.PanelLight
 end
 
 -- ───────────────────────────── prep / countdown ─────────────────────────────
@@ -163,27 +168,14 @@ function RunHUD.Prepare(info: any)
 	hud.Visible = true
 	caughtPanel.Visible = false
 	resultsPanel.Visible = false
-	bestDistance = info.bestDistance or 0
+	highScore = info.highScore or 0
 	hideFade()
-	rebuildEquipment()
-
-	-- Starting area card: equipment, charges, coins, distance, and who's behind you.
-	UIKit.Clear(prepCard)
-	UIKit.Label({ Text = "🏁 STARTING AREA", TextColor3 = C.Gold, Size = UDim2.new(1, 0, 0, 30), Parent = prepCard })
-	if #info.loadout == 0 then
-		UIKit.Label({ Text = "No equipment equipped", TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 22), Parent = prepCard })
-	end
-	for _, entry in info.loadout do
-		UIKit.Label({ Text = ("Slot %d: %s %s  ·  x%d charges"):format(entry.slot, entry.icon, entry.name, entry.charges), Size = UDim2.new(1, 0, 0, 22), Parent = prepCard })
-	end
-	UIKit.Label({ Text = ("🪙 Coins: %s"):format(Util.FormatNumber(info.bankCoins or 0)), Size = UDim2.new(1, 0, 0, 22), Parent = prepCard })
-	UIKit.Label({ Text = ("📏 Run distance: 0m   ·   🏆 Best: %sm"):format(Util.FormatNumber(bestDistance)), Size = UDim2.new(1, 0, 0, 22), Parent = prepCard })
-	local controls = if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-		then "Swipe ⬅️ ➡️ to change lanes · ⬆️ jump · ⬇️ roll"
-		else "A/D or ←/→ lanes · W/Space jump · S roll · 1-3 equipment"
-	UIKit.Label({ Text = controls, TextColor3 = C.Accent2, Size = UDim2.new(1, 0, 0, 20), Parent = prepCard })
-	prepCard.Visible = true
-	tweenIn(prepCard)
+	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+	tipLabel.Text = ("⭐ Score multiplier x%d  ·  %s"):format(
+		info.multiplier or 1,
+		if touch then "swipe to move · double-tap for 🛹" else "A/D lanes · W jump · S roll · E hoverboard"
+	)
+	tipLabel.Visible = true
 
 	if updateConnection then
 		updateConnection:Disconnect()
@@ -191,14 +183,12 @@ function RunHUD.Prepare(info: any)
 	updateConnection = RunService.RenderStepped:Connect(update)
 end
 
--- 3 → 2 → 1 → RUN! (or FIRE! when the cannon is loaded) against the server's go time.
-function RunHUD.Countdown(goClock: number, headStart: number, onGo: () -> ())
-	RunHUD.HideCannon()
+-- 3 → 2 → 1 → RUN! against the server's go time.
+function RunHUD.Countdown(goClock: number, onGo: () -> ())
 	task.spawn(function()
 		local step = Config.Run.CountdownStep
 		for i = 3, 1, -1 do
-			local at = goClock - step * i
-			local wait = at - os.clock()
+			local wait = goClock - step * i - os.clock()
 			if wait > 0 then
 				task.wait(wait)
 			end
@@ -208,216 +198,80 @@ function RunHUD.Countdown(goClock: number, headStart: number, onGo: () -> ())
 		if wait > 0 then
 			task.wait(wait)
 		end
-		prepCard.Visible = false
-		if headStart > 0 then
-			RunHUD.Big(("💥 FIRE! +%sm"):format(Util.FormatNumber(headStart)), Color3.fromRGB(255, 140, 40), 1.2)
-		else
-			RunHUD.Big("RUN!", C.Good, 0.8)
-		end
+		tipLabel.Visible = false
+		RunHUD.Big("RUN!", C.Good, 0.8)
 		onGo()
 	end)
-end
-
--- ───────────────────────────── head start cannon ─────────────────────────────
-
-local cannonPanel: Frame
-local reelStrip: Frame
-local cannonStatus: TextLabel
-local cannonButtons: Frame
-local cannonDeadline = 0
-local cannonSpinning = false
-local REEL_CELL = 96
-local REEL_REPEATS = 7
-
-local function buildReel(parent: Instance)
-	local window = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(20, 15, 35), ClipsDescendants = true, Size = UDim2.new(1, 0, 0, 74), Parent = parent })
-	UIKit.Corner(12).Parent = window
-	UIKit.Stroke(3, C.Gold).Parent = window
-	reelStrip = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(REEL_CELL * #Config.HeadStart.Outcomes * REEL_REPEATS, 74), Parent = window })
-	for rep = 0, REEL_REPEATS - 1 do
-		for i, outcome in Config.HeadStart.Outcomes do
-			local cell = UIKit.New("Frame", {
-				BackgroundColor3 = Color3.fromHSV(0.12 - (i - 1) * 0.02, 0.4 + i * 0.1, 0.9),
-				Position = UDim2.fromOffset((rep * #Config.HeadStart.Outcomes + i - 1) * REEL_CELL + 4, 6),
-				Size = UDim2.fromOffset(REEL_CELL - 8, 62),
-				Parent = reelStrip,
-			})
-			UIKit.Corner(10).Parent = cell
-			UIKit.Label({ Text = "🎯\n" .. outcome.label, Size = UDim2.fromScale(1, 1), Parent = cell })
-		end
-	end
-	-- Centre marker
-	UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = C.Bad, ZIndex = 3, Parent = window })
-end
-
--- Starting area: offer the cannon. `onReady` tells the server to start the countdown.
-function RunHUD.ShowCannon(info: any, onSpin: (currency: string) -> (), onReady: () -> ())
-	UIKit.Clear(cannonButtons)
-	cannonSpinning = false
-	cannonStatus.Text = "Spin to see how far the cannon fires you!"
-	cannonStatus.TextColor3 = C.Text
-	reelStrip.Position = UDim2.fromOffset(0, 0)
-	UIKit.Button({ Text = ("🎯 SPIN  🪙 %s"):format(Util.FormatNumber(info.headStartPrice or 0)), Size = UDim2.new(0.36, 0, 1, 0), BackgroundColor3 = C.Gold, TextColor3 = Color3.new(0, 0, 0), LayoutOrder = 1 }, function()
-		if not cannonSpinning then
-			onSpin("Coins")
-		end
-	end).Parent = cannonButtons
-	if info.headStartRobux then
-		UIKit.Button({ Text = "🎯 SPIN (R$)", Size = UDim2.new(0.28, 0, 1, 0), BackgroundColor3 = C.Good, LayoutOrder = 2 }, function()
-			if not cannonSpinning then
-				onSpin("Robux")
-			end
-		end).Parent = cannonButtons
-	end
-	UIKit.Button({ Text = "▶ RUN!", Size = UDim2.new(0.3, 0, 1, 0), BackgroundColor3 = C.Accent, LayoutOrder = 3 }, function()
-		if not cannonSpinning then
-			onReady()
-		end
-	end).Parent = cannonButtons
-	cannonPanel.Visible = true
-	tweenIn(cannonPanel)
-
-	cannonDeadline = os.clock() + (info.decisionTime or 7)
-	task.spawn(function()
-		while cannonPanel.Visible do
-			if not cannonSpinning then
-				local left = math.max(0, math.ceil(cannonDeadline - os.clock()))
-				cannonStatus.Text = ("Spin to see how far the cannon fires you!  ·  starting in %ds"):format(left)
-			end
-			task.wait(0.2)
-		end
-	end)
-end
-
--- Spins the reel and lands on the rolled outcome, then calls onDone.
-function RunHUD.PlaySpin(index: number, meters: number, onDone: () -> ())
-	cannonSpinning = true
-	cannonDeadline += Config.HeadStart.SpinTime + 1.5
-	UIKit.Clear(cannonButtons)
-	cannonStatus.Text = "🎰 SPINNING..."
-	local outcomes = #Config.HeadStart.Outcomes
-	local targetCell = (REEL_REPEATS - 2) * outcomes + (index - 1)
-	local ok, width = pcall(function()
-		return (reelStrip.Parent :: Frame).AbsoluteSize.X
-	end)
-	local windowWidth = if ok then width else 0
-	if windowWidth <= 0 then
-		windowWidth = 420
-	end
-	local targetX = -(targetCell * REEL_CELL + REEL_CELL / 2 - windowWidth / 2)
-	reelStrip.Position = UDim2.fromOffset(0, 0)
-	local tween = TweenService:Create(reelStrip, TweenInfo.new(Config.HeadStart.SpinTime, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(targetX, 0) })
-	tween:Play()
-	task.delay(Config.HeadStart.SpinTime, function()
-		cannonStatus.Text = ("🎯 CANNON LOADED: +%sm HEAD START!"):format(Util.FormatNumber(meters))
-		cannonStatus.TextColor3 = C.Gold
-		tweenIn(cannonStatus)
-		task.wait(1.1)
-		onDone()
-	end)
-end
-
-function RunHUD.CannonFailed(message: string?)
-	cannonSpinning = false
-	if message then
-		RunHUD.Flash(message, C.Bad)
-	end
-end
-
-function RunHUD.HideCannon()
-	if cannonPanel then
-		cannonPanel.Visible = false
-	end
-end
-
--- ───────────────────────────── biomes ─────────────────────────────
-
-local biomeLabel: TextLabel
-
-function RunHUD.SetBiome(biome: any, announce: boolean)
-	biomeLabel.Text = ("%s %s"):format(biome.icon, string.upper(biome.name))
-	biomeLabel.TextColor3 = biome.coinColor
-	if announce then
-		RunHUD.Big(("%s ENTERING %s"):format(biome.icon, string.upper(biome.name)), biome.coinColor, 2)
-		RunHUD.Flash(("%s · coins worth x%d"):format(biome.description, biome.coinValue), C.Text)
-	end
 end
 
 -- ───────────────────────────── caught / revive ─────────────────────────────
 
 function RunHUD.ShowCaught(info: any)
-	UIKit.Clear(caughtPanel)
-	UIKit.List(nil, 10).Parent = caughtPanel
-	UIKit.Padding(14).Parent = caughtPanel
-	UIKit.Label({ Text = "🪵 CAUGHT BY TUNG TUNG TUNG SAHUR!", TextColor3 = C.Bad, Size = UDim2.new(1, 0, 0, 40), Parent = caughtPanel })
-	local timerLabel = UIKit.Label({ Text = "", TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 24), Parent = caughtPanel })
-	if info.canRevive then
-		UIKit.Button({
-			Text = ("💪 REVIVE  🪙 %s"):format(Util.FormatNumber(info.cost)),
-			Size = UDim2.new(0.8, 0, 0, 54),
-			BackgroundColor3 = if info.bankCoins >= info.cost then C.Good else C.PanelLight,
-		}, function()
-			Remotes.Event("ChooseRevive"):FireServer("Coins")
-		end).Parent = caughtPanel
-		if info.robux then
-			UIKit.Button({ Text = "💪 REVIVE (R$)", Size = UDim2.new(0.8, 0, 0, 48), BackgroundColor3 = C.Accent2 }, function()
-				Remotes.Event("ChooseRevive"):FireServer("Robux")
-			end).Parent = caughtPanel
-		end
-	end
-	UIKit.Button({ Text = "END RUN", Size = UDim2.new(0.8, 0, 0, 48), BackgroundColor3 = C.Bad }, function()
-		Remotes.Event("ChooseRevive"):FireServer(false)
-	end).Parent = caughtPanel
+	caughtToken += 1
+	local token = caughtToken
+	caughtScore.Text = ("SCORE  %s"):format(Util.FormatNumber(info.score or RunController.State.score))
+	reviveCoinsButton.Visible = info.canRevive == true
+	reviveCoinsButton.Text = ("💪 SAVE ME  🪙 %s"):format(Util.FormatNumber(info.cost or 0))
+	reviveCoinsButton.BackgroundColor3 = if (info.bankCoins or 0) >= (info.cost or 0) then C.Good else C.PanelLight
+	reviveRobuxButton.Visible = info.canRevive == true and info.robux == true
 	caughtPanel.Visible = true
 	tweenIn(caughtPanel)
 
-	local deadline = os.clock() + (info.timeout or 10)
+	local duration = info.timeout or 10
+	local deadline = os.clock() + duration
 	task.spawn(function()
-		while caughtPanel.Visible and os.clock() < deadline do
-			timerLabel.Text = ("Run ends in %ds"):format(math.ceil(deadline - os.clock()))
-			task.wait(0.2)
+		while caughtToken == token and caughtPanel.Visible do
+			local left = deadline - os.clock()
+			if left <= 0 then
+				break
+			end
+			caughtTimer.Text = ("%ds"):format(math.ceil(left))
+			caughtTimerFill.Size = UDim2.fromScale(math.clamp(left / duration, 0, 1), 1)
+			task.wait(0.05)
 		end
 	end)
 end
 
 function RunHUD.HideCaught()
+	caughtToken += 1
 	caughtPanel.Visible = false
 end
 
 -- ───────────────────────────── results ─────────────────────────────
 
 function RunHUD.ShowResults(results: any)
-	caughtPanel.Visible = false
-	prepCard.Visible = false
+	RunHUD.HideCaught()
 	hud.Visible = false
-	UIKit.Clear(resultsPanel)
-	UIKit.List(nil, 8).Parent = resultsPanel
-	UIKit.Padding(16).Parent = resultsPanel
-	UIKit.Label({ Text = if results.newBest then "🏆 NEW BEST RUN! 🏆" else "RUN OVER", TextColor3 = C.Gold, Size = UDim2.new(1, 0, 0, 44), Parent = resultsPanel })
-	local rows = {
-		("📏 Distance: %sm"):format(Util.FormatNumber(results.distance)),
-		("🪙 Coins collected: %s"):format(Util.FormatNumber(results.coins)),
-		("🏃 Distance bonus: +%s"):format(Util.FormatNumber(results.distanceBonus)),
-		("💰 Total earned: %s"):format(Util.FormatNumber(results.totalCoins)),
-		("⏱️ Survived: %ss  ·  💪 Revives: %d"):format(Util.FormatNumber(results.survival), results.revives),
-		("🏆 Best: %sm"):format(Util.FormatNumber(results.best)),
-	}
-	for crateId, count in results.crates do
-		table.insert(rows, ("📦 Found %d %s crate%s!"):format(count, crateId, if count == 1 then "" else "s"))
-	end
-	for _, b in results.caught or {} do
-		table.insert(rows, ("🧠 Caught %s %s%s  (+%s/s on your base)"):format(b.icon, b.name, if b.isNew then " — NEW!" else "", Util.FormatNumber(b.income)))
-	end
-	for i, text in rows do
-		local label = UIKit.Label({ Text = text, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = i + 1, Parent = resultsPanel })
+	tipLabel.Visible = false
+	UIKit.Clear(resultsBody)
+
+	local order = 0
+	local function line(text: string, color: Color3?, height: number?)
+		order += 1
+		local label = UIKit.Label({ Text = text, TextColor3 = color or C.Text, Size = UDim2.new(1, 0, 0, height or 26), LayoutOrder = order, Parent = resultsBody })
 		label.TextTransparency = 1
-		task.delay(0.12 * i, function()
+		task.delay(0.1 * order, function()
 			TweenService:Create(label, TweenInfo.new(0.25), { TextTransparency = 0 }):Play()
 		end)
 	end
-	UIKit.Button({ Text = "BACK TO LOBBY", Size = UDim2.new(0.7, 0, 0, 54), BackgroundColor3 = C.Good, LayoutOrder = 100 }, function()
-		Remotes.Event("LeaveResults"):FireServer()
-	end).Parent = resultsPanel
+
+	line(if results.newHighScore then "🏆 NEW HIGH SCORE! 🏆" else "RUN OVER", C.Gold, 36)
+	line(Util.FormatNumber(results.score), C.Text, 54)
+	line(("📏 %sm  ×  ⭐ x%d multiplier"):format(Util.FormatNumber(results.distance), results.multiplier), C.Muted)
+	line(("🪙 +%s coins"):format(Util.FormatNumber(results.totalCoins)) .. (if results.boxCoins > 0 then ("  (❓ %s from mystery boxes)"):format(Util.FormatNumber(results.boxCoins)) else ""), C.Gold)
+	if results.boxBoards > 0 then
+		line(("🛹 +%d hoverboard%s"):format(results.boxBoards, if results.boxBoards == 1 then "" else "s"), Color3.fromRGB(120, 200, 255))
+	end
+	for _, b in results.rescued do
+		line(("🔓 Rescued %s %s  (+%dx)%s"):format(b.icon, b.name, b.bonus, if b.isNew then " — NEW!" else ""), Color3.fromRGB(255, 140, 230))
+	end
+	if results.newMultiplier > results.multiplier then
+		line(("⭐ Your multiplier is now x%d!"):format(results.newMultiplier), Color3.fromRGB(255, 200, 60))
+	elseif #results.rescued > 0 then
+		line("Your pedestals are full — buy more in ⬆️ Upgrades to use them!", C.Muted)
+	end
+	line(("🏆 High score: %s"):format(Util.FormatNumber(results.highScore)), C.Muted)
+
 	resultsPanel.Visible = true
 	tweenIn(resultsPanel)
 end
@@ -430,10 +284,9 @@ function RunHUD.Hide()
 	gui.Enabled = false
 	hud.Visible = false
 	fade.Visible = false
-	caughtPanel.Visible = false
+	RunHUD.HideCaught()
 	resultsPanel.Visible = false
-	prepCard.Visible = false
-	RunHUD.HideCannon()
+	tipLabel.Visible = false
 	bigText.Visible = false
 	eventText.Visible = false
 end
@@ -441,71 +294,87 @@ end
 -- ───────────────────────────── build ─────────────────────────────
 
 function RunHUD.Init(playerGui: PlayerGui)
-	gui = UIKit.New("ScreenGui", { Name = "RunHUD", ResetOnSpawn = false, Enabled = false, IgnoreGuiInset = true, DisplayOrder = 5, Parent = playerGui })
+	gui = UIKit.New("ScreenGui", { Name = "RunHUD", ResetOnSpawn = false, Enabled = false, IgnoreGuiInset = true, DisplayOrder = 5, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui })
 
 	hud = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, Parent = gui })
 
-	distanceLabel = UIKit.Label({ Text = "0m", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 44), Size = UDim2.fromOffset(320, 54), Parent = hud })
-	coinsLabel = UIKit.Label({ Text = "🪙 0", Position = UDim2.fromOffset(20, 50), Size = UDim2.fromOffset(200, 42), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gold, Parent = hud })
-	bestLabel = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -20, 0, 50), Size = UDim2.fromOffset(240, 34), TextXAlignment = Enum.TextXAlignment.Right, Parent = hud })
+	-- Score (top right)
+	local scoreBox = UIKit.New("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 46), Size = UDim2.fromOffset(280, 100), BackgroundTransparency = 1, Parent = hud })
+	scoreLabel = UIKit.Label({ Text = "0", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -70, 0, 0), Size = UDim2.new(1, -70, 0, 52), TextXAlignment = Enum.TextXAlignment.Right, Parent = scoreBox })
+	multiplierBadge = UIKit.Label({ Text = "x1", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 4), Size = UDim2.fromOffset(62, 44), BackgroundTransparency = 0, BackgroundColor3 = C.Accent, Parent = scoreBox })
+	UIKit.Corner(12).Parent = multiplierBadge
+	coinsLabel = UIKit.Label({ Text = "🪙 0", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 58), Size = UDim2.new(1, 0, 0, 34), TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = C.Gold, Parent = scoreBox })
 
-	-- Chase meter
-	local chase = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 104), Size = UDim2.fromOffset(320, 18), BackgroundColor3 = Color3.fromRGB(40, 20, 20), Parent = hud })
-	UIKit.Corner(9).Parent = chase
+	-- Distance + high score (top left)
+	distanceLabel = UIKit.Label({ Text = "0m", Position = UDim2.fromOffset(20, 50), Size = UDim2.fromOffset(200, 36), TextXAlignment = Enum.TextXAlignment.Left, Parent = hud })
+	highLabel = UIKit.Label({ Text = "", Position = UDim2.fromOffset(20, 88), Size = UDim2.fromOffset(240, 26), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Muted, Parent = hud })
+
+	-- Villain proximity (top centre)
+	local chase = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 52), Size = UDim2.fromOffset(300, 16), BackgroundColor3 = Color3.fromRGB(40, 20, 20), Parent = hud })
+	UIKit.Corner(8).Parent = chase
 	UIKit.Stroke(2).Parent = chase
 	chaseFill = UIKit.New("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.Good, Parent = chase })
-	UIKit.Corner(9).Parent = chaseFill
-	chaseLabel = UIKit.Label({ Text = "🪵 SAHUR DISTANCE", Position = UDim2.new(0, 0, 1, 2), Size = UDim2.new(1, 0, 0, 18), Parent = chase })
+	UIKit.Corner(8).Parent = chaseFill
+	chaseLabel = UIKit.Label({ Text = "", Position = UDim2.new(0, 0, 1, 2), Size = UDim2.new(1, 0, 0, 18), Parent = chase })
 
-	effectsLabel = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -118), Size = UDim2.new(0.8, 0, 0, 28), TextColor3 = C.Accent2, Parent = hud })
+	-- Power-up timers (right side)
+	powerBars = UIKit.New("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), Size = UDim2.fromOffset(190, 200), BackgroundTransparency = 1, Parent = hud })
+	UIKit.List(nil, 6).Parent = powerBars
+	for i, id in POWER_ORDER do
+		local def = PowerUpData.Get(id)
+		local row = if def then powerRow(def.icon, def.color) else powerRow("🛹", Color3.fromRGB(80, 200, 255))
+		row.frame.LayoutOrder = i
+		barRows[id] = row
+	end
 
-	equipmentBar = UIKit.New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -30), Size = UDim2.new(0.8, 0, 0, 70), Parent = hud })
-	UIKit.List(Enum.FillDirection.Horizontal, 16).Parent = equipmentBar
+	-- Hoverboard button (bottom right)
+	hoverButton = UIKit.Button({ Text = "🛹 x0", AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -20, 1, -24), Size = UDim2.fromOffset(120, 64), BackgroundColor3 = C.PanelLight }, function()
+		RunController.UseHoverboard()
+	end)
+	hoverButton.Parent = hud
 
-	bigText = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.38), Size = UDim2.new(0.8, 0, 0, 110), Visible = false, ZIndex = 5, Parent = gui })
-	eventText = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.26), Size = UDim2.new(0.6, 0, 0, 50), Visible = false, ZIndex = 5, Parent = gui })
+	bigText = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.36), Size = UDim2.new(0.8, 0, 0, 110), Visible = false, ZIndex = 5, Parent = gui })
+	eventText = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.24), Size = UDim2.new(0.7, 0, 0, 44), Visible = false, ZIndex = 5, Parent = gui })
+	tipLabel = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -28), Size = UDim2.new(0.7, 0, 0, 28), Visible = false, TextColor3 = C.Accent2, Parent = gui })
 
-	prepCard = UIKit.New("Frame", {
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.new(0, 20, 0.55, 0),
-		Size = UDim2.fromOffset(380, 230),
-		BackgroundColor3 = C.Panel,
-		BackgroundTransparency = 0.1,
-		Visible = false,
-		Parent = gui,
-	})
-	UIKit.Corner(14).Parent = prepCard
-	UIKit.Stroke(3, C.Gold).Parent = prepCard
-	UIKit.Padding(12).Parent = prepCard
-	UIKit.List(nil, 4, Enum.HorizontalAlignment.Left).Parent = prepCard
-
-	caughtPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.55), Size = UDim2.fromOffset(460, 290), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 8, Parent = gui })
+	-- ── Revive panel ("SAVE ME!") ──
+	caughtPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.55), Size = UDim2.fromOffset(420, 300), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 10, Parent = gui })
 	UIKit.Corner(18).Parent = caughtPanel
 	UIKit.Stroke(4, C.Bad).Parent = caughtPanel
+	UIKit.Padding(14).Parent = caughtPanel
+	UIKit.List(nil, 10).Parent = caughtPanel
+	UIKit.Label({ Text = ("☣️ %s CAUGHT YOU!"):format(Config.Villain.Title), TextColor3 = C.Bad, Size = UDim2.new(1, 0, 0, 36), LayoutOrder = 1, ZIndex = 11, Parent = caughtPanel })
+	caughtScore = UIKit.Label({ Text = "", Size = UDim2.new(1, 0, 0, 28), LayoutOrder = 2, ZIndex = 11, Parent = caughtPanel })
+	local timerTrack = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(30, 30, 40), Size = UDim2.new(0.8, 0, 0, 14), LayoutOrder = 3, ZIndex = 11, Parent = caughtPanel })
+	UIKit.Corner(7).Parent = timerTrack
+	caughtTimerFill = UIKit.New("Frame", { BackgroundColor3 = C.Gold, Size = UDim2.fromScale(1, 1), ZIndex = 12, Parent = timerTrack })
+	UIKit.Corner(7).Parent = caughtTimerFill
+	caughtTimer = UIKit.Label({ Text = "", TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 20), LayoutOrder = 4, ZIndex = 11, Parent = caughtPanel })
+	reviveCoinsButton = UIKit.Button({ Text = "💪 SAVE ME", Size = UDim2.new(0.85, 0, 0, 52), BackgroundColor3 = C.Good, LayoutOrder = 5, ZIndex = 11 }, function()
+		Remotes.Event("ChooseRevive"):FireServer("Coins")
+	end)
+	reviveCoinsButton.Parent = caughtPanel
+	reviveRobuxButton = UIKit.Button({ Text = "💪 SAVE ME (R$)", Size = UDim2.new(0.85, 0, 0, 44), BackgroundColor3 = C.Accent2, LayoutOrder = 6, ZIndex = 11 }, function()
+		Remotes.Event("ChooseRevive"):FireServer("Robux")
+	end)
+	reviveRobuxButton.Parent = caughtPanel
+	UIKit.Button({ Text = "END RUN", Size = UDim2.new(0.85, 0, 0, 44), BackgroundColor3 = C.Bad, LayoutOrder = 7, ZIndex = 11 }, function()
+		Remotes.Event("ChooseRevive"):FireServer(false)
+	end).Parent = caughtPanel
 
-	resultsPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(500, 470), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 8, Parent = gui })
+	-- ── Results panel ──
+	resultsPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(520, 500), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 10, Parent = gui })
 	UIKit.Corner(18).Parent = resultsPanel
 	UIKit.Stroke(4, C.Gold).Parent = resultsPanel
-
-	biomeLabel = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 142), Size = UDim2.fromOffset(320, 24), Parent = hud })
-
-	-- Head start cannon panel
-	cannonPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -130), Size = UDim2.fromOffset(460, 210), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 6, Parent = gui })
-	UIKit.Corner(16).Parent = cannonPanel
-	UIKit.Stroke(4, Color3.fromRGB(255, 140, 40)).Parent = cannonPanel
-	UIKit.Padding(10).Parent = cannonPanel
-	UIKit.List(nil, 8).Parent = cannonPanel
-	UIKit.Label({ Text = "🎯 HEAD START CANNON", TextColor3 = Color3.fromRGB(255, 170, 60), Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 1, Parent = cannonPanel })
-	local reelHolder = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 74), LayoutOrder = 2, Parent = cannonPanel })
-	buildReel(reelHolder)
-	cannonStatus = UIKit.Label({ Text = "", Size = UDim2.new(1, 0, 0, 22), LayoutOrder = 3, Parent = cannonPanel })
-	cannonButtons = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = 4, Parent = cannonPanel })
-	UIKit.List(Enum.FillDirection.Horizontal, 8).Parent = cannonButtons
+	resultsBody = UIKit.New("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(16, 14), Size = UDim2.new(1, -32, 1, -90), Parent = resultsPanel })
+	UIKit.List(nil, 6).Parent = resultsBody
+	UIKit.Button({ Text = "BACK TO BASE", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -16), Size = UDim2.new(0.7, 0, 0, 54), BackgroundColor3 = C.Good }, function()
+		Remotes.Event("LeaveResults"):FireServer()
+	end).Parent = resultsPanel
 
 	fade = UIKit.New("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 50, Parent = gui })
 	fadeText = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.8, 0, 0, 90), ZIndex = 51, Parent = fade })
 
-	RunController.LoadoutChanged:Connect(update)
 	RunController.Event:Connect(function(text: string, color: Color3?)
 		RunHUD.Flash(text, color)
 	end)

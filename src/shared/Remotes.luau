@@ -11,39 +11,32 @@ local EVENTS = {
 	"Notify", -- (text, color?) toast message
 	"RunStarting", -- () fade to "RUN STARTING..."
 	"RunPrepare", -- (runInfo) sets up the client run controller
-	"RunWorld", -- (event) world events: Destroyed, Explosion, ItemCollected
+	"RunWorld", -- (event) power-ups, mystery boxes, rescues, hoverboard
 	"RunDebris", -- (pieces) client-side debris to simulate
 	"RunCaught", -- (reviveInfo) the player was caught; offer revive
 	"RunRevived", -- () continue running
 	"RunEnded", -- (results) rewards screen
 	"ReturnedToLobby", -- ()
-	"CrateRevealed", -- (reveal) a crate was opened (e.g. after a Robux purchase)
-	"RunGo", -- (goInfo) countdown start time + head start
-	"HeadStartResult", -- (spin) cannon spin result after a Robux purchase
 
 	-- client → server
 	"ReportHit", -- (object, impactInfo)
 	"CollectCoin", -- (coinPart)
-	"PickupItem", -- (pickupPart)
-	"UseEquipment", -- (slotIndex)
+	"PickupItem", -- (pickupPart) power-up, mystery box or caged Brainrot
+	"UseHoverboard", -- ()
 	"ReportCaught", -- ()
-	"ChooseRevive", -- (useRevive: boolean)
-	"LeaveResults", -- () back to lobby from the rewards screen
+	"ChooseRevive", -- ("Coins" | "Robux" | false)
+	"LeaveResults", -- () back to the lobby from the rewards screen
 	"GoToBase", -- () teleport to your own plot
-	"RunReady", -- () done deciding in the starting area, start the countdown
 }
 
 local FUNCTIONS = {
 	"GetData",
-	"BuyCrate", -- (crateId, currency "Coins"|"Robux")
-	"OpenCrate", -- (crateId) -> reveal of an owned crate
-	-- BuyCrate with coins buys AND opens in one go, returning the reveal.
-	"EquipItem", -- (slotIndex, itemId?)
+	"BuyUpgrade", -- (powerUpId) next level of a power-up
+	"BuyPedestal", -- () one more Brainrot pedestal on your base
+	"BuyHoverboards", -- (currency "Coins" | "Robux")
 	"ClaimDaily",
 	"GetLeaderboards",
 	"BuyCoinPack", -- (productKey)
-	"SetBuddy", -- (brainrotId) choose the Brainrot that joins your runs
-	"BuyHeadStart", -- (currency) spin the head start cannon
 }
 
 local Remotes = {}

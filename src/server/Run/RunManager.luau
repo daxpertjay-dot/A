@@ -1,24 +1,26 @@
 --!strict
 -- Owns the lifecycle of every run:
 --
---   LOBBY → RUN GATE (walk in) → "RUN STARTING..." → STARTING AREA
---   → Tung Tung Tung Sahur intro → 3, 2, 1, RUN! → ENDLESS RUN
---   → caught → REVIVE or END → REWARDS SCREEN → LOBBY
+--   BASE → RUN PORTAL (walk in) → "RUN STARTING..." → villain intro
+--   → 3, 2, 1, RUN! → escape: coins, power-ups, rescue caged Brainrots
+--   → caught → REVIVE or END → RESULTS (score, coins, rescues) → BASE
 --
 -- Each run gets its own strip of world far from the lobby. The server is
--- authoritative over the track, destruction, coins, pickups, equipment
--- charges and rewards; the client owns the moment-to-moment movement.
+-- authoritative over the track, destruction, coins, power-ups, hoverboards,
+-- the score and rewards; the client owns moment-to-moment movement.
 
 local CollectionService = game:GetService("CollectionService")
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
-local EquipmentData = require(Shared.EquipmentData)
 local ImpactRules = require(Shared.ImpactRules)
+local PowerUpData = require(Shared.PowerUpData)
 local Remotes = require(Shared.Remotes)
+local Util = require(Shared.Util)
 
 local PlayerData = require(script.Parent.Parent.PlayerData)
 local Leaderboards = require(script.Parent.Parent.Leaderboards)
@@ -29,13 +31,6 @@ local RunManager = {}
 
 type Phase = "Starting" | "Intro" | "Running" | "Caught" | "Results"
 
-type LoadoutEntry = {
-	slot: number,
-	itemId: string,
-	level: number,
-	charges: number,
-}
-
 type Run = {
 	player: Player,
 	slot: number,
@@ -43,28 +38,20 @@ type Run = {
 	folder: Folder,
 	track: TrackGenerator.Track,
 	phase: Phase,
-	goClock: number,
 	d: number, -- server-tracked distance (studs)
+	score: number,
+	baseMultiplier: number, -- from Brainrots on the base, fixed for the run
 	coins: number,
-	loadout: { LoadoutEntry },
-	shieldUntil: number,
-	boostUntil: number,
-	boostMultiplier: number,
+	-- Power-up timers (os.clock())
 	magnetUntil: number,
-	magnetRadius: number,
-	doublerUntil: number,
+	jetpackUntil: number,
+	sneakersUntil: number,
+	boosterUntil: number,
+	hoverUntil: number,
+	hoverboardsUsed: number,
 	revives: number,
-	crates: { [string]: number },
-	caughtBrainrots: { string },
-	headStart: number, -- meters the cannon will fire you (0 = none)
-	headStartSpun: boolean,
-	awaitingPurchase: boolean,
-	countdownStarted: boolean,
-	launchUntil: number,
-	landingD: number,
-	decisionDeadline: number,
-	perks: { [string]: number }, -- run buddy perk totals
-	buddy: string,
+	rescued: { string },
+	boxRewards: { { kind: string, amount: number } },
 	caughtClock: number,
 	survival: number,
 	ended: boolean,
@@ -74,11 +61,16 @@ type Run = {
 local runs: { [Player]: Run } = {}
 local slotsInUse: { [number]: boolean } = {}
 local runsFolder: Folder
+local rng = Random.new()
 
 local START_D = 6
 
 local function notify(player: Player, text: string, color: Color3?)
 	Remotes.Event("Notify"):FireClient(player, text, color)
+end
+
+local function world(player: Player, event: { [string]: any })
+	Remotes.Event("RunWorld"):FireClient(player, event)
 end
 
 local function allocateSlot(): number
@@ -95,54 +87,16 @@ local function rootOf(player: Player): BasePart?
 	return character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 end
 
-local function trackDistanceOf(run: Run, position: Vector3): number
-	return run.origin.Z - position.Z
-end
-
 function RunManager.IsRunning(player: Player): boolean
 	return runs[player] ~= nil
 end
 
+-- Current score multiplier: Brainrots on your base, doubled by the booster.
+local function currentMultiplier(run: Run): number
+	return run.baseMultiplier * (if os.clock() < run.boosterUntil then 2 else 1)
+end
+
 -- ───────────────────────────── start ─────────────────────────────
-
-local function buildLoadout(player: Player, extraCharges: number): { LoadoutEntry }
-	local profile = PlayerData.Get(player)
-	local loadout = {}
-	if not profile then
-		return loadout
-	end
-	for slot = 1, PlayerData.UnlockedSlots(player) do
-		local itemId = profile.Loadout[slot]
-		local item = EquipmentData.Get(itemId)
-		if item and (profile.Inventory[item.id] or 0) > 0 then
-			local level = EquipmentData.LevelFromCount(profile.Inventory[item.id])
-			table.insert(loadout, { slot = slot, itemId = item.id, level = level, charges = EquipmentData.ChargesAt(item, level) + extraCharges })
-		end
-	end
-	return loadout
-end
-
-local function loadoutForClient(run: Run)
-	local out = {}
-	for _, entry in run.loadout do
-		local item = EquipmentData.Get(entry.itemId) :: EquipmentData.Item
-		local scale = EquipmentData.ScaleAt(entry.level)
-		table.insert(out, {
-			slot = entry.slot,
-			itemId = item.id,
-			name = item.name,
-			icon = item.icon,
-			ability = item.ability,
-			rarity = item.rarity,
-			level = entry.level,
-			charges = entry.charges,
-			duration = if item.duration then item.duration * scale else nil,
-			radius = if item.radius then item.radius * scale else nil,
-			speedMultiplier = item.speedMultiplier,
-		})
-	end
-	return out
-end
 
 function RunManager.StartRun(player: Player)
 	if runs[player] then
@@ -155,7 +109,6 @@ function RunManager.StartRun(player: Player)
 		return
 	end
 
-	local perks = BrainrotData.PerkTotals(profile.Buddy)
 	local slot = allocateSlot()
 	local origin = Vector3.new(Config.Run.WorldOriginX + slot * Config.Run.SlotSpacing, Config.Run.WorldY, 0)
 	local folder = Instance.new("Folder")
@@ -170,28 +123,19 @@ function RunManager.StartRun(player: Player)
 		folder = folder,
 		track = nil :: any,
 		phase = "Starting",
-		goClock = math.huge,
 		d = START_D,
+		score = 0,
+		baseMultiplier = PlayerData.Multiplier(profile),
 		coins = 0,
-		loadout = buildLoadout(player, perks.ExtraCharges or 0),
-		shieldUntil = 0,
-		boostUntil = 0,
-		boostMultiplier = 1,
 		magnetUntil = 0,
-		magnetRadius = 0,
-		doublerUntil = 0,
+		jetpackUntil = 0,
+		sneakersUntil = 0,
+		boosterUntil = 0,
+		hoverUntil = 0,
+		hoverboardsUsed = 0,
 		revives = 0,
-		crates = {},
-		caughtBrainrots = {},
-		headStart = 0,
-		headStartSpun = false,
-		awaitingPurchase = false,
-		countdownStarted = false,
-		launchUntil = 0,
-		landingD = START_D,
-		decisionDeadline = math.huge,
-		perks = perks,
-		buddy = profile.Buddy,
+		rescued = {},
+		boxRewards = {},
 		caughtClock = 0,
 		survival = 0,
 		ended = false,
@@ -202,7 +146,7 @@ function RunManager.StartRun(player: Player)
 
 	-- 1) "RUN STARTING..." fade on the client while the world is built.
 	Remotes.Event("RunStarting"):FireClient(player)
-	run.track = TrackGenerator.new(folder, origin, math.random(1, 2 ^ 30))
+	run.track = TrackGenerator.new(folder, origin, rng:NextInteger(1, 2 ^ 30))
 
 	table.insert(run.connections, humanoid.Died:Connect(function()
 		RunManager.EndRun(player, "Died")
@@ -225,113 +169,24 @@ function RunManager.StartRun(player: Player)
 		-- group when its run controller takes over (it simulates the character).
 		currentCharacter:PivotTo(startCf)
 
-		-- Intro: Sahur shows up, then the player gets a few seconds in the
-		-- starting area to use the head start cannon before the countdown.
 		run.phase = "Intro"
+		local leadIn = Config.Run.IntroDuration + Config.Run.CountdownStep * 3 + 0.25
 		Remotes.Event("RunPrepare"):FireClient(player, {
 			origin = origin,
 			startD = START_D,
-			loadout = loadoutForClient(run),
-			bankCoins = profile.Coins,
-			bestDistance = profile.Stats.BestDistance,
 			trackFolder = run.track.folder,
-			buddy = run.buddy,
-			perks = perks,
-			decisionTime = Config.HeadStart.DecisionTime,
-			headStartPrice = Config.HeadStart.CoinPrice,
-			headStartRobux = Config.DeveloperProducts.HeadStart ~= 0,
+			multiplier = run.baseMultiplier,
+			hoverboards = profile.Hoverboards,
+			highScore = profile.Stats.HighScore,
+			bankCoins = profile.Coins,
+			goServerTime = workspace:GetServerTimeNow() + leadIn,
 		})
-		-- Start anyway if the player never presses RUN (longer while a Robux
-		-- purchase prompt is open).
-		run.decisionDeadline = os.clock() + Config.Run.IntroDuration + Config.HeadStart.DecisionTime
-		task.spawn(function()
-			while runs[player] == run and not run.countdownStarted do
-				local deadline = run.decisionDeadline
-				if os.clock() > deadline and (not run.awaitingPurchase or os.clock() > deadline + 20) then
-					RunManager.BeginCountdown(player)
-					break
-				end
-				task.wait(0.25)
+		task.delay(leadIn, function()
+			if runs[player] == run and run.phase == "Intro" then
+				run.phase = "Running"
 			end
 		end)
 	end)
-end
-
--- 3 → 2 → 1 → GO (or FIRE! when the cannon is loaded).
-function RunManager.BeginCountdown(player: Player)
-	local run = runs[player]
-	if not run or run.phase ~= "Intro" or run.countdownStarted then
-		return
-	end
-	run.countdownStarted = true
-	local leadIn = Config.Run.CountdownStep * 3 + 0.25
-	run.goClock = os.clock() + leadIn
-	if run.perks.StartShield then
-		run.shieldUntil = run.goClock + run.perks.StartShield
-	end
-	if run.headStart > 0 then
-		local flight = ImpactRules.LaunchProfile(run.headStart)
-		run.launchUntil = run.goClock + flight
-		run.landingD = START_D + run.headStart / Config.Run.MetersPerStud
-	end
-	Remotes.Event("RunGo"):FireClient(player, {
-		goServerTime = workspace:GetServerTimeNow() + leadIn,
-		headStart = run.headStart,
-	})
-	task.delay(leadIn, function()
-		if runs[player] == run and run.phase == "Intro" then
-			run.phase = "Running"
-		end
-	end)
-end
-
--- Rolls the cannon and makes sure the track exists where you'll land.
-local function spinHeadStart(run: Run): { [string]: any }
-	local index = ImpactRules.RollHeadStart(Random.new())
-	local outcome = Config.HeadStart.Outcomes[index]
-	run.headStart = outcome.meters
-	run.headStartSpun = true
-	-- Give the reel time to finish before the countdown can start on its own.
-	run.decisionDeadline = math.max(run.decisionDeadline, os.clock() + Config.HeadStart.SpinTime + 2)
-	run.track:EnsureAhead(START_D + outcome.meters / Config.Run.MetersPerStud + Config.Run.GenerateWhenWithin)
-	return { ok = true, index = index, meters = outcome.meters }
-end
-
-local function onBuyHeadStart(player: Player, currency: any)
-	local run = runs[player]
-	local profile = PlayerData.Get(player)
-	if not run or not profile or run.phase ~= "Intro" or run.countdownStarted then
-		return { ok = false, message = "The cannon only works in the starting area!" }
-	end
-	if run.headStartSpun then
-		return { ok = false, message = "Already loaded!" }
-	end
-	if currency == "Robux" then
-		if Config.DeveloperProducts.HeadStart == 0 then
-			return { ok = false, message = "Robux purchases aren't set up yet" }
-		end
-		run.awaitingPurchase = true
-		game:GetService("MarketplaceService"):PromptProductPurchase(player, Config.DeveloperProducts.HeadStart)
-		return { ok = true, pending = true }
-	end
-	if profile.Coins < Config.HeadStart.CoinPrice then
-		return { ok = false, message = "Not enough coins!" }
-	end
-	profile.Coins -= Config.HeadStart.CoinPrice
-	PlayerData.Changed(player)
-	return spinHeadStart(run)
-end
-
--- Robux purchase finished. Returns false if there's no run to use it in (the
--- caller refunds it).
-function RunManager.GrantHeadStart(player: Player): boolean
-	local run = runs[player]
-	if not run or run.phase ~= "Intro" or run.countdownStarted or run.headStartSpun then
-		return false
-	end
-	run.awaitingPurchase = false
-	Remotes.Event("HeadStartResult"):FireClient(player, spinHeadStart(run))
-	return true
 end
 
 -- ───────────────────────────── per-frame ─────────────────────────────
@@ -346,14 +201,15 @@ local function updateRun(run: Run, dt: number)
 	end
 	run.survival += dt
 	-- Cap progress by the fastest legal speed so teleporting ahead is useless.
-	local reported = trackDistanceOf(run, root.Position)
-	local maxSpeed = ImpactRules.SpeedAt(run.d * Config.Run.MetersPerStud) * math.max(1.6, run.boostMultiplier) * Config.Run.MaxSpeedTolerance
+	local reported = run.origin.Z - root.Position.Z
+	local maxSpeed = ImpactRules.SpeedAt(run.d * Config.Run.MetersPerStud) * 1.6 * Config.Run.MaxSpeedTolerance
 	local allowed = run.d + maxSpeed * dt + 2
-	if os.clock() < run.launchUntil + 0.5 then
-		-- Mid cannon flight: anything up to the landing spot is legit.
-		allowed = math.max(allowed, run.landingD + 5)
+	local newD = math.clamp(reported, run.d - 20, allowed)
+	-- Score: every meter forward is worth PointsPerMeter × multiplier.
+	if newD > run.d then
+		run.score += (newD - run.d) * Config.Run.MetersPerStud * Config.Score.PointsPerMeter * currentMultiplier(run)
 	end
-	run.d = math.clamp(reported, run.d - 20, allowed)
+	run.d = newD
 	run.track:Update(run.d)
 end
 
@@ -387,7 +243,7 @@ end
 
 local function onReportHit(player: Player, object: any, info: any)
 	local run = runs[player]
-	if not run or run.phase ~= "Running" or not validObject(run, object) or type(info) ~= "table" then
+	if not run or run.phase ~= "Running" or not validObject(run, object) or type(info) ~= "table" or info.side then
 		return
 	end
 	local obstacle = object :: Instance
@@ -395,11 +251,8 @@ local function onReportHit(player: Player, object: any, info: any)
 		return
 	end
 	local position = objectPosition(obstacle)
-	if not position then
-		return
-	end
 	-- Long objects (train cars) have far-away centres; allow generous slack.
-	if not nearRunner(run, position, 40) then
+	if not position or not nearRunner(run, position, 40) then
 		return
 	end
 
@@ -408,18 +261,13 @@ local function onReportHit(player: Player, object: any, info: any)
 	local collisionDamage = obstacle:GetAttribute("CollisionDamage") or 0
 	local expected = ImpactRules.SpeedAt(run.d * Config.Run.MetersPerStud)
 	local speed = math.clamp(tonumber(info.speed) or 0, 0, expected * 1.1)
-	local boost = now < run.boostUntil + 0.25
-	local shield = now < run.shieldUntil + 0.25
+	local onBoard = now < run.hoverUntil + 0.25
 
-	if info.side then
-		-- Clipped something while changing lanes; nothing breaks.
-		return
-	end
-
-	local result = ImpactRules.Resolve(tier, collisionDamage, speed, boost, shield, run.perks.CrashThrough)
+	-- A hoverboard takes the hit and breaks (the obstacle gets smashed).
+	local result = ImpactRules.Resolve(tier, collisionDamage, speed, false, onBoard)
 	if result.outcome == "Absorbed" then
-		run.shieldUntil = 0
-		Remotes.Event("RunWorld"):FireClient(player, { type = "ShieldUsed" })
+		run.hoverUntil = 0
+		world(player, { type = "HoverboardBroken" })
 	end
 	local impact = if typeof(info.point) == "Vector3" then info.point else position
 	Destruction.ApplyDamage(obstacle, result.damage, impact, player, speed)
@@ -435,20 +283,71 @@ local function onCollectCoin(player: Player, coin: any)
 		return
 	end
 	local now = os.clock()
-	local magnet = math.max(run.perks.Magnet or 0, if now < run.magnetUntil + 0.5 then run.magnetRadius else 0)
-	local tolerance = Config.Run.PickupTolerance + magnet
-	if not nearRunner(run, part.Position, tolerance) then
+	local magnet = if now < run.magnetUntil + 0.5 then Config.PowerUps.MagnetRadius else 0
+	if not nearRunner(run, part.Position, Config.Run.PickupTolerance + magnet) then
 		return
 	end
-	local baseValue = part:GetAttribute("Value") or Config.Economy.CoinValue
+	local value = part:GetAttribute("Value") or Config.Economy.CoinValue
 	part:Destroy()
-	local value = baseValue * (if now < run.doublerUntil then 2 else 1) * (1 + (run.perks.CoinBonus or 0))
 	run.coins += value
+end
+
+local function rollMysteryBox(): { kind: string, amount: number }
+	local total = 0
+	for _, r in Config.Economy.MysteryBox do
+		total += r.weight
+	end
+	local roll = rng:NextNumber() * total
+	for _, r in Config.Economy.MysteryBox do
+		if roll < r.weight then
+			return { kind = r.kind, amount = r.amount }
+		end
+		roll -= r.weight
+	end
+	return { kind = "Coins", amount = 100 }
+end
+
+-- Jetpack: a trail of coins up in the sky for the whole flight.
+local function spawnSkyCoins(run: Run, duration: number)
+	local folder = Instance.new("Folder")
+	folder.Name = "SkyCoins"
+	folder.Parent = run.track.folder
+	local speed = ImpactRules.SpeedAt(run.d * Config.Run.MetersPerStud) * Config.PowerUps.JetpackSpeedMultiplier
+	local fromD = run.d + 25
+	local toD = run.d + speed * duration - 10
+	local lane = 0
+	local d = fromD
+	local i = 0
+	while d < toD do
+		i += 1
+		if i % 12 == 0 then
+			lane = math.clamp(lane + (if rng:NextNumber() < 0.5 then -1 else 1), -1, 1)
+		end
+		local c = Util.Part({
+			Name = "Coin",
+			Parent = folder,
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.4, 2.2, 2.2),
+			CFrame = CFrame.new(run.origin + Vector3.new(Config.Run.LanePositions[lane], Config.PowerUps.JetpackHeight + 2.5, -d)) * CFrame.Angles(0, math.rad(90), 0),
+			Color = Color3.fromRGB(255, 200, 40),
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+			CanQuery = false,
+			CastShadow = false,
+		})
+		c:SetAttribute("Coin", true)
+		c:SetAttribute("Value", Config.Economy.CoinValue)
+		d += 4
+	end
+	task.delay(duration + 8, function()
+		folder:Destroy()
+	end)
 end
 
 local function onPickupItem(player: Player, pickupPart: any)
 	local run = runs[player]
-	if not run or run.phase ~= "Running" or not validObject(run, pickupPart) then
+	local profile = PlayerData.Get(player)
+	if not run or not profile or run.phase ~= "Running" or not validObject(run, pickupPart) then
 		return
 	end
 	local part = pickupPart :: Instance
@@ -456,74 +355,56 @@ local function onPickupItem(player: Player, pickupPart: any)
 	if not part:IsA("BasePart") or not kind or not nearRunner(run, part.Position, Config.Run.PickupTolerance) then
 		return
 	end
+	-- Read everything we need before the part is destroyed.
 	local brainrotId = part:GetAttribute("BrainrotId")
-	local crateId = part:GetAttribute("CrateId") or "Common"
+	local powerUpId = part:GetAttribute("PowerUpId")
 	part:Destroy()
 
+	local now = os.clock()
 	if kind == "Brainrot" then
-		local id = brainrotId
-		local data = if type(id) == "string" then BrainrotData.Get(id) else nil
+		local data = BrainrotData.Get(if type(brainrotId) == "string" then brainrotId else nil)
 		if data then
-			table.insert(run.caughtBrainrots, data.id)
-			Remotes.Event("RunWorld"):FireClient(player, { type = "BrainrotCaught", id = data.id, name = data.name, icon = data.icon, rarity = data.rarity })
+			table.insert(run.rescued, data.id)
+			world(player, { type = "BrainrotRescued", id = data.id, name = data.name, icon = data.icon, rarity = data.rarity, bonus = data.bonus })
 		end
-	elseif kind == "Crate" then
-		run.crates[crateId] = (run.crates[crateId] or 0) + 1
-		Remotes.Event("RunWorld"):FireClient(player, { type = "CrateFound", crateId = crateId })
-	elseif #run.loadout > 0 then
-		local entry = run.loadout[math.random(1, #run.loadout)]
-		entry.charges += 1
-		Remotes.Event("RunWorld"):FireClient(player, { type = "Charges", slot = entry.slot, charges = entry.charges, gained = true })
-	else
-		run.coins += 25 * (1 + (run.perks.CoinBonus or 0))
-		Remotes.Event("RunWorld"):FireClient(player, { type = "BonusCoins", amount = 25 })
+	elseif kind == "PowerUp" then
+		local powerUp = PowerUpData.Get(if type(powerUpId) == "string" then powerUpId else nil)
+		if not powerUp then
+			return
+		end
+		local duration = PowerUpData.Duration(powerUp.id, profile.Upgrades[powerUp.id])
+		if powerUp.id == "Magnet" then
+			run.magnetUntil = now + duration
+		elseif powerUp.id == "Jetpack" then
+			run.jetpackUntil = now + duration
+			spawnSkyCoins(run, duration)
+		elseif powerUp.id == "SuperSneakers" then
+			run.sneakersUntil = now + duration
+		elseif powerUp.id == "ScoreBooster" then
+			run.boosterUntil = now + duration
+		end
+		world(player, { type = "PowerUp", id = powerUp.id, duration = duration })
+	elseif kind == "MysteryBox" then
+		local reward = rollMysteryBox()
+		table.insert(run.boxRewards, reward)
+		world(player, { type = "MysteryBox", kind = reward.kind, amount = reward.amount })
 	end
 end
 
-local function onUseEquipment(player: Player, slot: any)
+local function onUseHoverboard(player: Player)
 	local run = runs[player]
-	if not run or run.phase ~= "Running" or type(slot) ~= "number" then
+	local profile = PlayerData.Get(player)
+	if not run or not profile or run.phase ~= "Running" then
 		return
 	end
-	local entry: LoadoutEntry? = nil
-	for _, e in run.loadout do
-		if e.slot == slot then
-			entry = e
-		end
-	end
-	if not entry or entry.charges <= 0 then
-		return
-	end
-	local item = EquipmentData.Get(entry.itemId) :: EquipmentData.Item
-	local scale = EquipmentData.ScaleAt(entry.level)
-	local duration = (item.duration or 0) * scale
 	local now = os.clock()
-	entry.charges -= 1
-
-	local event: { [string]: any } = { type = "EquipmentUsed", slot = entry.slot, ability = item.ability, charges = entry.charges, duration = duration }
-	if item.ability == "Shield" then
-		run.shieldUntil = now + duration
-	elseif item.ability == "Magnet" then
-		run.magnetUntil = now + duration
-		run.magnetRadius = (item.radius or 20) * scale
-		event.radius = run.magnetRadius
-	elseif item.ability == "SpeedBoost" then
-		run.boostUntil = now + duration
-		run.boostMultiplier = item.speedMultiplier or 1.3
-		event.multiplier = run.boostMultiplier
-	elseif item.ability == "CoinDoubler" then
-		run.doublerUntil = now + duration
-	elseif item.ability == "Bomb" then
-		local root = rootOf(player)
-		local radius = (item.radius or 25) * scale
-		local basePosition = if root then root.Position else run.origin + Vector3.new(0, 3, -run.d)
-		local center = basePosition + Vector3.new(0, 0, -radius * 0.6)
-		local destroyed = Destruction.Explode(run.track.folder, center, radius, item.maxTier or 2, player)
-		event.center = center
-		event.radius = radius
-		event.destroyed = destroyed
+	if now < run.hoverUntil or profile.Hoverboards <= 0 then
+		return
 	end
-	Remotes.Event("RunWorld"):FireClient(player, event)
+	profile.Hoverboards -= 1
+	run.hoverboardsUsed += 1
+	run.hoverUntil = now + Config.PowerUps.HoverboardDuration
+	world(player, { type = "Hoverboard", duration = Config.PowerUps.HoverboardDuration, left = profile.Hoverboards })
 end
 
 -- ───────────────────────────── caught / revive / end ─────────────────────────────
@@ -540,13 +421,13 @@ local function onReportCaught(player: Player)
 	run.phase = "Caught"
 	run.caughtClock = os.clock()
 	local profile = PlayerData.Get(player)
-	local canRevive = run.revives < Config.Economy.MaxRevivesPerRun
 	Remotes.Event("RunCaught"):FireClient(player, {
-		canRevive = canRevive,
+		canRevive = run.revives < Config.Economy.MaxRevivesPerRun,
 		cost = reviveCost(run),
 		bankCoins = if profile then profile.Coins else 0,
 		robux = Config.DeveloperProducts.Revive ~= 0,
 		timeout = 10,
+		score = math.floor(run.score),
 	})
 	local caughtAt = run.caughtClock
 	task.delay(10.5, function()
@@ -586,7 +467,7 @@ local function onChooseRevive(player: Player, choice: any)
 			notify(player, "Not enough coins to revive!", Color3.fromRGB(255, 90, 90))
 		end
 	elseif choice == "Robux" and Config.DeveloperProducts.Revive ~= 0 then
-		game:GetService("MarketplaceService"):PromptProductPurchase(player, Config.DeveloperProducts.Revive)
+		MarketplaceService:PromptProductPurchase(player, Config.DeveloperProducts.Revive)
 	else
 		RunManager.EndRun(player, "Caught")
 	end
@@ -623,33 +504,44 @@ function RunManager.EndRun(player: Player, reason: string)
 
 	local profile = PlayerData.Get(player)
 	local meters = math.floor(math.max(0, run.d - START_D) * Config.Run.MetersPerStud)
-	local distanceBonus = math.floor(meters * Config.Economy.DistanceCoinBonus)
-	local runCoins = math.floor(run.coins)
-	local total = runCoins + distanceBonus
-	local newBest = false
-	local caught = {}
+	local score = math.floor(run.score)
+	local boxCoins = 0
+	local boxBoards = 0
+	for _, reward in run.boxRewards do
+		if reward.kind == "Coins" then
+			boxCoins += reward.amount
+		else
+			boxBoards += reward.amount
+		end
+	end
+	local totalCoins = run.coins + boxCoins
+	local newHighScore = false
+	local rescued = {}
+	local oldMultiplier = run.baseMultiplier
+	local newMultiplier = oldMultiplier
 
 	if profile then
 		local stats = profile.Stats
 		stats.TotalRuns += 1
 		stats.TotalDistance += meters
-		stats.TotalCoins += total
-		if meters > stats.BestDistance then
-			stats.BestDistance = meters
-			newBest = true
-		end
+		stats.TotalCoins += totalCoins
+		stats.BestDistance = math.max(stats.BestDistance, meters)
 		stats.LongestSurvival = math.max(stats.LongestSurvival, math.floor(run.survival))
-		profile.Coins += total
-		for crateId, count in run.crates do
-			profile.Crates[crateId] = (profile.Crates[crateId] or 0) + count
+		if score > stats.HighScore then
+			stats.HighScore = score
+			newHighScore = true
 		end
-		-- Caught Brainrots go straight to your base (kept even if you're caught).
-		for _, id in run.caughtBrainrots do
+		profile.Coins += totalCoins
+		profile.Hoverboards += boxBoards
+		-- Rescued Brainrots go straight to your base (kept even if you're caught).
+		for _, id in run.rescued do
 			local data = BrainrotData.Get(id) :: BrainrotData.Brainrot
-			table.insert(caught, { id = id, name = data.name, icon = data.icon, isNew = not profile.Collection[id], income = data.income })
+			table.insert(rescued, { id = id, name = data.name, icon = data.icon, bonus = data.bonus, isNew = not profile.Collection[id] })
 			profile.Brainrots[id] = (profile.Brainrots[id] or 0) + 1
 			profile.Collection[id] = true
+			stats.BrainrotsRescued += 1
 		end
+		newMultiplier = PlayerData.Multiplier(profile)
 		PlayerData.Changed(player)
 		task.spawn(Leaderboards.Submit, player)
 	end
@@ -662,19 +554,23 @@ function RunManager.EndRun(player: Player, reason: string)
 
 	Remotes.Event("RunEnded"):FireClient(player, {
 		reason = reason,
+		score = score,
+		newHighScore = newHighScore,
+		highScore = if profile then profile.Stats.HighScore else score,
 		distance = meters,
-		coins = runCoins,
-		distanceBonus = distanceBonus,
-		totalCoins = total,
-		newBest = newBest,
-		best = if profile then profile.Stats.BestDistance else meters,
+		multiplier = oldMultiplier,
+		newMultiplier = newMultiplier,
+		coins = run.coins,
+		boxCoins = boxCoins,
+		boxBoards = boxBoards,
+		totalCoins = totalCoins,
 		survival = math.floor(run.survival),
 		revives = run.revives,
-		crates = run.crates,
-		caught = caught,
+		rescued = rescued,
+		pedestals = if profile then profile.Pedestals else 0,
 	})
 
-	-- Back to the lobby when the player closes the results (or after 30s).
+	-- Back to the base when the player closes the results (or after 30s).
 	task.delay(30, function()
 		if runs[player] == run then
 			RunManager.ReturnToLobby(player)
@@ -694,13 +590,9 @@ function RunManager.Init()
 	Remotes.Event("ReportHit").OnServerEvent:Connect(onReportHit)
 	Remotes.Event("CollectCoin").OnServerEvent:Connect(onCollectCoin)
 	Remotes.Event("PickupItem").OnServerEvent:Connect(onPickupItem)
-	Remotes.Event("UseEquipment").OnServerEvent:Connect(onUseEquipment)
+	Remotes.Event("UseHoverboard").OnServerEvent:Connect(onUseHoverboard)
 	Remotes.Event("ReportCaught").OnServerEvent:Connect(onReportCaught)
 	Remotes.Event("ChooseRevive").OnServerEvent:Connect(onChooseRevive)
-	Remotes.Function("BuyHeadStart").OnServerInvoke = onBuyHeadStart
-	Remotes.Event("RunReady").OnServerEvent:Connect(function(player)
-		RunManager.BeginCountdown(player)
-	end)
 	Remotes.Event("LeaveResults").OnServerEvent:Connect(function(player)
 		local run = runs[player]
 		if run and run.phase == "Results" then
@@ -708,7 +600,7 @@ function RunManager.Init()
 		end
 	end)
 
-	-- Physical run entrance: walk into the portal to start.
+	-- Walk into a run portal to start. Plot portals only work for their owner.
 	local debounce: { [Player]: number } = {}
 	local function hookTrigger(trigger: Instance)
 		if not trigger:IsA("BasePart") then
@@ -720,20 +612,16 @@ function RunManager.Init()
 			if not player or runs[player] then
 				return
 			end
-			-- Plot portals only work for the plot's owner.
-			local owner = trigger:GetAttribute("OwnerUserId")
-			if owner ~= nil and owner ~= player.UserId then
-				if (debounce[player] or 0) <= os.clock() then
-					debounce[player] = os.clock() + 3
-					Remotes.Event("Notify"):FireClient(player, "That's someone else's run portal — use your own base!", Color3.fromRGB(255, 200, 90))
-				end
-				return
-			end
 			local now = os.clock()
 			if (debounce[player] or 0) > now then
 				return
 			end
 			debounce[player] = now + 3
+			local owner = trigger:GetAttribute("OwnerUserId")
+			if owner ~= nil and owner ~= player.UserId then
+				notify(player, "That's someone else's run portal — use your own base!", Color3.fromRGB(255, 200, 90))
+				return
+			end
 			RunManager.StartRun(player)
 		end)
 	end

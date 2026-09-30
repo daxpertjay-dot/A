@@ -1,17 +1,27 @@
 --!strict
 -- Central tuning values for Brainrot Runner. Everything that affects "feel"
--- (speeds, camera, chase pressure, destruction) lives here so it can be tuned
--- without touching gameplay code.
+-- (speeds, camera, chase pressure, scoring, prices) lives here so it can be
+-- tuned without touching gameplay code.
+--
+-- The game in one line: escape the villain, grab coins and power-ups,
+-- rescue caged Brainrots. Brainrots on your base raise your SCORE MULTIPLIER;
+-- coins buy upgrades.
 
 local Config = {}
 
 Config.DataStoreName = "BrainrotRunner_PlayerData_v1"
 Config.DataStoreEnabled = true -- falls back to session-only data if DataStores are unavailable (e.g. Studio without API access)
 
+-- ───────────────────────────── VILLAIN ─────────────────────────────
+-- The evil guy chasing you. He kidnapped the Brainrots; Tung Tung Tung Sahur
+-- is his henchman. Rename him here.
+Config.Villain = {
+	Name = "Verity",
+	Title = "VERITY",
+	Henchman = "TungTungTungSahur",
+}
+
 -- ───────────────────────────── LOBBY ─────────────────────────────
--- Blocky "tycoon street" lobby (Steal a Brainrot / Grow a Garden style):
--- a central street with shops down the middle, conveyor belts looping around
--- it, and a row of player plots on each side.
 Config.Lobby = {
 	Origin = Vector3.new(0, 0, 0),
 	PlotsPerSide = 4,
@@ -24,11 +34,38 @@ Config.Lobby = {
 	UseStuds = true, -- classic stud / inlet surfaces on lobby parts
 }
 
--- Player bases
-Config.Plot = {
-	Pedestals = 8, -- Brainrots displayed (and earning) on your base
-	OfflineIncomeCap = 2 * 60 * 60, -- seconds of offline earnings kept
-	OfflineIncomeRate = 0.5, -- offline earnings are half speed
+-- ───────────────────────────── SCORE ─────────────────────────────
+-- Score = meters run × score multiplier. The multiplier is 1 plus the bonus
+-- of every Brainrot standing on your base, doubled while a ✖️2 Score Booster
+-- is active.
+Config.Score = {
+	PointsPerMeter = 1,
+	BaseMultiplier = 1,
+	-- Pedestals on your base. You start with a few; buy more with coins.
+	StartingPedestals = 3,
+	MaxPedestals = 10,
+	PedestalCosts = { 750, 1500, 3000, 5000, 8000, 12000, 20000 }, -- cost of pedestal #4, #5, ...
+}
+
+-- ───────────────────────────── COINS ─────────────────────────────
+-- Every coin is worth 1 (like Subway Surfers). A normal run gives a few
+-- hundred; Mystery Boxes and the Jetpack's sky trail are the big moments.
+-- Coins are spent on upgrades, pedestals and hoverboards.
+Config.Economy = {
+	StartingCoins = 200,
+	CoinValue = 1,
+	ReviveBaseCost = 200, -- doubles every revive in the same run
+	MaxRevivesPerRun = 3,
+	HoverboardCost = 300,
+	StartingHoverboards = 2,
+	MysteryBox = {
+		{ kind = "Coins", amount = 100, weight = 40 },
+		{ kind = "Coins", amount = 250, weight = 25 },
+		{ kind = "Coins", amount = 500, weight = 12 },
+		{ kind = "Coins", amount = 1500, weight = 3 },
+		{ kind = "Hoverboard", amount = 1, weight = 15 },
+		{ kind = "Hoverboard", amount = 3, weight = 5 },
+	},
 }
 
 -- ───────────────────────────── RUN WORLD ─────────────────────────────
@@ -57,7 +94,6 @@ Config.Run = {
 	JumpVelocity = 52,
 	FastFallVelocity = -110, -- pressing roll mid-air slams you down (Subway Surfers style)
 	RollDuration = 0.7,
-	RollCooldown = 0.1,
 	JumpBuffer = 0.18, -- a jump pressed this long before landing still fires on landing
 
 	-- Hitboxes (studs)
@@ -76,7 +112,7 @@ Config.Run = {
 
 	-- Timings for the run intro (seconds)
 	RunStartingFade = 1.2,
-	IntroDuration = 2.6, -- Tung Tung Tung Sahur reveal
+	IntroDuration = 2.6, -- villain reveal
 	CountdownStep = 0.75, -- 3 → 2 → 1 → RUN!
 
 	-- Anti-cheat tolerance on server-side distance tracking
@@ -84,35 +120,29 @@ Config.Run = {
 	PickupTolerance = 18,
 }
 
--- ───────────────────────────── HEAD START CANNON ─────────────────────────────
--- In the starting area a cannon can fire you down the track. Pay coins or
--- Robux, spin the reel, and it decides how far you fly.
-Config.HeadStart = {
-	CoinPrice = 250,
-	ProductKey = "HeadStart", -- key into Config.DeveloperProducts
-	DecisionTime = 7, -- seconds to decide before the countdown starts on its own
-	SpinTime = 2.6, -- reel animation length
-	LandingInvulnerability = 2,
-	Outcomes = {
-		{ meters = 150, weight = 35, label = "150m" },
-		{ meters = 250, weight = 25, label = "250m" },
-		{ meters = 400, weight = 18, label = "400m" },
-		{ meters = 600, weight = 12, label = "600m" },
-		{ meters = 900, weight = 7, label = "900m" },
-		{ meters = 1500, weight = 3, label = "1500m!" },
-	},
+-- ───────────────────────────── POWER-UPS ─────────────────────────────
+-- Picked up on the track (Subway Surfers style). Upgrading one with coins
+-- makes it last longer. See PowerUpData for the list.
+Config.PowerUps = {
+	SpawnChancePerSegment = 0.45,
+	MagnetRadius = 26,
+	JetpackHeight = 22, -- studs above the track while flying
+	JetpackSpeedMultiplier = 1.25,
+	JetpackLandingInvulnerability = 1.5,
+	SneakersJumpMultiplier = 1.45, -- jump velocity with Super Sneakers
+	HoverboardDuration = 30,
+	HoverboardInvulnerability = 1.5, -- after the board breaks
 }
 
 -- ───────────────────────────── CHASE ─────────────────────────────
--- "Gap" is how far (in seconds of running) Tung Tung Tung Sahur is behind you.
+-- "Gap" is how far (in seconds of running) the villain is behind you.
 Config.Chase = {
 	StartGap = 10,
 	MaxGap = 12,
 	RecoverPerSecond = 0.35,
-	DangerGap = 3.5, -- Sahur becomes visible right behind the player below this
+	DangerGap = 3.5, -- the villain becomes visible right behind the player below this
 	RevivedGap = 9,
 	RevivedInvulnerability = 2.5,
-	BombPushback = 3,
 
 	-- Gap lost per impact tier
 	GapLoss = {
@@ -129,7 +159,7 @@ Config.Chase = {
 
 -- ───────────────────────────── DESTRUCTION ─────────────────────────────
 Config.Destruction = {
-	CrashThroughSpeed = 56, -- studs/sec needed to smash a tier 2 wall without equipment
+	CrashThroughSpeed = 56, -- studs/sec needed to smash a wooden wall by running into it
 	MaxDebrisPerEvent = 15,
 	DebrisLifetime = 3,
 	MaxClientDebris = 120,
@@ -137,7 +167,7 @@ Config.Destruction = {
 
 -- ───────────────────────────── CAMERA ─────────────────────────────
 Config.Camera = {
-	-- Higher and further up, tilted down at the track (Subway Surfers angle).
+	-- Higher up, tilted down at the track (Subway Surfers angle).
 	Distance = 15,
 	Height = 12,
 	LookAhead = 12,
@@ -149,15 +179,6 @@ Config.Camera = {
 	FastSpeed = 55,
 	VeryFastSpeed = 68,
 	FOVSharpness = 3,
-}
-
--- ───────────────────────────── ECONOMY ─────────────────────────────
-Config.Economy = {
-	StartingCoins = 250,
-	ReviveBaseCost = 150, -- doubles every revive in the same run
-	MaxRevivesPerRun = 3,
-	DistanceCoinBonus = 0.05, -- coins awarded per meter at the end of a run
-	CoinValue = 1,
 }
 
 -- ───────────────────────────── ANIMATIONS ─────────────────────────────
@@ -184,26 +205,21 @@ Config.Animations = {
 	RunSpeedDivisor = 34, -- playback speed = run speed / this
 }
 
--- Loadout slots unlock through progression (total runs)
-Config.LoadoutSlotUnlocks = { 0, 5, 20 }
-
 -- Robux developer products. Leave at 0 until you create them on the Creator
 -- Dashboard; Robux buttons are disabled for products with id 0.
 Config.DeveloperProducts = {
-	RareCrate = 0,
-	LegendaryCrate = 0,
 	CoinPackSmall = 0,
 	CoinPackLarge = 0,
 	Revive = 0,
-	HeadStart = 0,
+	Hoverboards = 0, -- 5 hoverboards
 }
 
 -- Optional audio. Put your own asset ids here ("rbxassetid://123").
 Config.Sounds = {
-	Tung = "",
+	Villain = "",
 	Crash = "",
-	Explosion = "",
 	Coin = "",
+	PowerUp = "",
 	Countdown = "",
 	Go = "",
 	LobbyMusic = "",

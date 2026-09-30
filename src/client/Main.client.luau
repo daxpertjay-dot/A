@@ -1,20 +1,17 @@
 --!strict
 -- Client entry point. Switches between the two halves of the game:
---   LOBBY: free Roblox movement, stations, lobby FX, lobby UI
---   RUN:   custom run controller + camera + Sahur + run HUD
+--   LOBBY: free Roblox movement, your base, upgrade shop, lobby UI
+--   RUN:   custom run controller + camera + the villain chase + run HUD
 
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
-
 local TweenService = game:GetService("TweenService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
-local BiomeData = require(Shared.BiomeData)
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 
-local Buddy = require(script.Parent.Buddy)
 local Chaser = require(script.Parent.Chaser)
 local DebrisFX = require(script.Parent.DebrisFX)
 local InputController = require(script.Parent.InputController)
@@ -57,30 +54,24 @@ local function playSound(id: string, volume: number?)
 	end)
 end
 
--- Each biome has its own sky: fog colour, ambient light and time of day.
--- Fog also hides the far end of the generated track.
+-- Runs happen at night in Verity's rail yard: dark sky, toxic green haze.
 local lobbyLighting = {
 	ClockTime = Lighting.ClockTime,
-	Ambient = Lighting.Ambient,
 	OutdoorAmbient = Lighting.OutdoorAmbient,
 	Brightness = Lighting.Brightness,
+	FogColor = Lighting.FogColor,
 }
-
-local function setBiomeLighting(biome: any)
-	local l = biome.lighting
-	TweenService:Create(Lighting, TweenInfo.new(1.5), {
-		FogColor = l.fog,
-		OutdoorAmbient = l.ambient,
-		ClockTime = l.clockTime,
-		Brightness = l.brightness,
-	}):Play()
-	Lighting.FogStart = 220
-	Lighting.FogEnd = 650
-end
 
 local function setRunAtmosphere(enabled: boolean)
 	if enabled then
-		setBiomeLighting(BiomeData.At(0))
+		TweenService:Create(Lighting, TweenInfo.new(1), {
+			ClockTime = 20.5,
+			OutdoorAmbient = Color3.fromRGB(110, 100, 140),
+			Brightness = 2,
+			FogColor = Color3.fromRGB(40, 55, 45),
+		}):Play()
+		Lighting.FogStart = 200
+		Lighting.FogEnd = 620
 	else
 		Lighting.FogStart = 0
 		Lighting.FogEnd = 100000
@@ -91,10 +82,9 @@ local function setRunAtmosphere(enabled: boolean)
 end
 
 local function applyData(snapshot: any)
-	if not snapshot then
-		return
+	if snapshot then
+		LobbyUI.SetData(snapshot)
 	end
-	LobbyUI.SetData(snapshot)
 end
 
 -- ───────────────────────────── lobby → run ─────────────────────────────
@@ -119,74 +109,26 @@ Remotes.Event("RunPrepare").OnClientEvent:Connect(function(info)
 	RunHUD.Prepare(info)
 	Chaser.Start()
 	Chaser.PlayIntro()
-	Buddy.Start(info.buddy)
 	RunCamera.Start()
 	RunCamera.PlayIntro(Config.Run.IntroDuration, Chaser.Position)
-	playSound(Config.Sounds.Tung, 0.9)
+	playSound(Config.Sounds.Villain, 0.9)
+	RunHUD.Big(("☣️ %s IS COMING ☣️"):format(Config.Villain.Title), Color3.fromRGB(150, 255, 110), Config.Run.IntroDuration - 0.2)
 
-	RunHUD.SetBiome(BiomeData.At(0), false)
-	RunHUD.Big("🪵 TUNG TUNG TUNG SAHUR 🪵", Color3.fromRGB(255, 200, 120), Config.Run.IntroDuration - 0.2)
-
-	-- After the intro: the head start cannon offer in the starting area.
-	task.delay(Config.Run.IntroDuration, function()
-		Chaser.EndIntro()
-		if RunController.State.phase ~= "Intro" then
-			return
-		end
-		RunHUD.ShowCannon(info, function(currency)
-			local res = Remotes.Function("BuyHeadStart"):InvokeServer(currency)
-			if type(res) == "table" and res.ok and res.index then
-				RunHUD.PlaySpin(res.index, res.meters, function()
-					Remotes.Event("RunReady"):FireServer()
-				end)
-			elseif type(res) == "table" and not res.ok then
-				RunHUD.CannonFailed(res.message)
-			end
-		end, function()
-			Remotes.Event("RunReady"):FireServer()
-		end)
+	-- Convert the server's go time into local clock time.
+	local goClock = os.clock() + math.max(0, info.goServerTime - workspace:GetServerTimeNow())
+	task.delay(Config.Run.IntroDuration, Chaser.EndIntro)
+	RunHUD.Countdown(goClock, function()
+		playSound(Config.Sounds.Go)
+		RunController.Go()
 	end)
-end)
-
--- Robux cannon spins come back asynchronously.
-Remotes.Event("HeadStartResult").OnClientEvent:Connect(function(res)
-	if type(res) == "table" and res.ok then
-		RunHUD.PlaySpin(res.index, res.meters, function()
-			Remotes.Event("RunReady"):FireServer()
-		end)
-	end
-end)
-
--- The server starts the countdown (after RUN!, a spin, or the timer).
-Remotes.Event("RunGo").OnClientEvent:Connect(function(go)
-	local goClock = os.clock() + math.max(0, go.goServerTime - workspace:GetServerTimeNow())
-	RunHUD.Countdown(goClock, go.headStart or 0, function()
-		if (go.headStart or 0) > 0 then
-			playSound(Config.Sounds.Explosion)
-			local startArea = RunController.WorldPosition() + Vector3.new(0, 5, 9)
-			DebrisFX.Explosion(startArea, 10)
-		else
-			playSound(Config.Sounds.Go)
-		end
-		RunController.Go(go.headStart)
-	end)
-end)
-
-RunController.BiomeChanged:Connect(function(biome)
-	setBiomeLighting(biome)
-	RunHUD.SetBiome(biome, true)
-end)
-
-RunController.Landed:Connect(function()
-	RunHUD.Big("🎯 LANDED!", Color3.fromRGB(255, 200, 60), 0.9)
 end)
 
 -- ───────────────────────────── during the run ─────────────────────────────
 
 Remotes.Event("RunWorld").OnClientEvent:Connect(function(event)
 	RunController.HandleWorldEvent(event)
-	if event.type == "EquipmentUsed" and event.ability == "Bomb" then
-		playSound(Config.Sounds.Explosion)
+	if event.type == "PowerUp" or event.type == "Hoverboard" or event.type == "MysteryBox" then
+		playSound(Config.Sounds.PowerUp)
 	end
 end)
 
@@ -202,8 +144,8 @@ end)
 
 RunController.Caught:Connect(function()
 	Chaser.SetCaught(true)
-	RunHUD.Big("🪵 BONK!", Color3.fromRGB(255, 90, 90), 1)
-	playSound(Config.Sounds.Tung, 1)
+	RunHUD.Big("☣️ GOTCHA!", Color3.fromRGB(255, 90, 90), 1)
+	playSound(Config.Sounds.Villain, 1)
 end)
 
 Remotes.Event("RunCaught").OnClientEvent:Connect(function(info)
@@ -216,7 +158,7 @@ Remotes.Event("RunRevived").OnClientEvent:Connect(function()
 	RunController.Revive()
 end)
 
--- ───────────────────────────── run → rewards → lobby ─────────────────────────────
+-- ───────────────────────────── run → results → base ─────────────────────────────
 
 Remotes.Event("RunEnded").OnClientEvent:Connect(function(results)
 	RunController.Stop()
@@ -228,7 +170,6 @@ local function backToLobby()
 	RunController.Stop()
 	RunCamera.Stop()
 	Chaser.Stop()
-	Buddy.Stop()
 	RunHUD.Hide()
 	setRunAtmosphere(false)
 	LobbyFX.SetEnabled(true)
@@ -252,9 +193,6 @@ end)
 -- ───────────────────────────── data / notifications ─────────────────────────────
 
 Remotes.Event("DataUpdated").OnClientEvent:Connect(applyData)
-Remotes.Event("CrateRevealed").OnClientEvent:Connect(function(reveal)
-	LobbyUI.Reveal(reveal)
-end)
 Remotes.Event("Notify").OnClientEvent:Connect(function(text: string, color: Color3?)
 	if inRun then
 		RunHUD.Flash(text, color)

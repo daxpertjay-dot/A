@@ -1,22 +1,24 @@
 --!strict
--- The library of prebuilt track segments. Each builder receives a context
--- describing where the segment sits in the run and fills it with road,
--- scenery, obstacles, coins and pickups.
+-- The track: VERITY'S RAIL YARD. One consistent world (Subway Surfers
+-- style): three rail lanes through a night-time freight yard and factory,
+-- with the villain chasing you. Every segment is kept deliberately clean:
+-- the lanes hold only what you have to react to, scenery stays off to the
+-- sides.
 --
 -- Track space: `d` is distance along the run (forward = world -Z), `x` is the
--- sideways offset from the centre lane, `y` is height above the road.
+-- sideways offset from the centre lane, `y` is height above the ground.
 --
 -- Collision groups (registered in TrackGenerator):
---   RunGround   – anything the runner can stand on (road, ramps, train roofs)
+--   RunGround   – anything the runner can stand on (ground, ramps, train roofs)
 --   RunObstacle – anything the runner can crash into
 -- Scenery stays in Default so the runner's probes ignore it.
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
-local BiomeData = require(Shared.BiomeData)
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local ImpactRules = require(Shared.ImpactRules)
 local ModelFactory = require(Shared.ModelFactory)
+local PowerUpData = require(Shared.PowerUpData)
 local Util = require(Shared.Util)
 
 local Destruction = require(script.Parent.Destruction)
@@ -27,6 +29,16 @@ local LANES = Config.Run.LanePositions
 local LANE_IDS = { -1, 0, 1 }
 local ROAD_WIDTH = 30
 
+local THEME = {
+	Ground = Color3.fromRGB(62, 58, 66),
+	Rail = Color3.fromRGB(150, 150, 160),
+	Wall = Color3.fromRGB(85, 82, 92),
+	Toxic = Color3.fromRGB(120, 255, 80),
+	Evil = Color3.fromRGB(150, 60, 220),
+	Coin = Color3.fromRGB(255, 200, 40),
+	Silhouette = Color3.fromRGB(28, 24, 36),
+}
+
 export type Ctx = {
 	folder: Model,
 	origin: Vector3,
@@ -35,11 +47,7 @@ export type Ctx = {
 	rng: Random,
 	difficulty: number,
 	distance: number,
-	biome: BiomeData.Biome,
-	isFirst: boolean?,
 }
-
-type ObstacleKind = "Barricade" | "SteelBarrier" | "OverheadSign" | "OverheadPipe" | "Crates" | "WoodWall" | "ConcreteWall" | "Car" | "TrainCar"
 
 local OBSTACLE_TYPE: { [string]: string } = {
 	Barricade = "Jump",
@@ -49,9 +57,7 @@ local OBSTACLE_TYPE: { [string]: string } = {
 	Crates = "Block",
 	WoodWall = "Block",
 	ConcreteWall = "Block",
-	Car = "Block",
 	TrainCar = "Block",
-	LavaPool = "Jump",
 }
 
 -- ───────────────────────────── helpers ─────────────────────────────
@@ -94,185 +100,46 @@ local function obstacleModel(ctx: Ctx, kind: string, lane: number): Model
 	return model
 end
 
--- Road slab, lane markings and kerbs.
--- Road slab in the biome's style (City segments may pass their own look),
--- plus biome ground on both sides so the world matches the zone.
-local function road(ctx: Ctx, color: Color3?, material: Enum.Material?)
+-- Gravel bed with a pair of rails in every lane, low walls at the edges.
+local function yardFloor(ctx: Ctx)
 	local len = ctx.length
-	local biome = ctx.biome
-	local useOverride = biome.id == "City" and color ~= nil
-	ground(ctx, {
-		Name = "Road",
-		Size = Vector3.new(ROAD_WIDTH, 2, len),
-		CFrame = CF(ctx, 0, -1, len / 2),
-		Color = if useOverride then color else biome.road.color,
-		Material = if useOverride then material or Enum.Material.Asphalt else biome.road.material,
-	})
-	for _, side in { -1, 1 } do
-		scenery(ctx, {
-			Name = "BiomeGround",
-			Size = Vector3.new(120, 2, len),
-			CFrame = CF(ctx, side * (ROAD_WIDTH / 2 + 60), -1.2, len / 2),
-			Color = biome.ground.color,
-			Material = biome.ground.material,
-		})
-	end
-	for _, x in { -4, 4 } do
-		for d = 4, len - 4, 12 do
-			scenery(ctx, { Name = "LaneLine", Size = Vector3.new(0.4, 0.05, 6), CFrame = CF(ctx, x, 0.03, d), Color = Color3.fromRGB(240, 240, 240), CanCollide = false })
+	ground(ctx, { Name = "Ground", Size = Vector3.new(ROAD_WIDTH, 2, len), CFrame = CF(ctx, 0, -1, len / 2), Color = THEME.Ground, Material = Enum.Material.Slate })
+	for _, lane in LANE_IDS do
+		for _, side in { -1, 1 } do
+			scenery(ctx, { Name = "Rail", Size = Vector3.new(0.35, 0.3, len), CFrame = CF(ctx, LANES[lane] + side * 1.6, 0.15, len / 2), Color = THEME.Rail, Material = Enum.Material.Metal, CanCollide = false })
 		end
 	end
 	for _, side in { -1, 1 } do
-		scenery(ctx, { Name = "Kerb", Size = Vector3.new(3, 0.8, len), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 - 1.5), 0.4, len / 2), Color = Color3.fromRGB(200, 200, 205) })
+		scenery(ctx, { Name = "YardWall", Size = Vector3.new(2, 3.5, len), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 + 1), 1.75, len / 2), Color = THEME.Wall, Material = Enum.Material.Concrete })
+		-- Wide dark ground beyond the walls
+		scenery(ctx, { Name = "Outskirts", Size = Vector3.new(140, 2, len), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 + 72), -1.2, len / 2), Color = Color3.fromRGB(40, 38, 46), Material = Enum.Material.Asphalt })
 	end
 end
 
-local PALETTES = {
-	City = { Color3.fromRGB(255, 120, 200), Color3.fromRGB(120, 220, 255), Color3.fromRGB(255, 220, 90), Color3.fromRGB(180, 130, 255), Color3.fromRGB(140, 240, 150) },
-	Dark = { Color3.fromRGB(70, 60, 90), Color3.fromRGB(60, 70, 80), Color3.fromRGB(90, 70, 60) },
-	Industrial = { Color3.fromRGB(230, 140, 40), Color3.fromRGB(120, 120, 130), Color3.fromRGB(240, 200, 60) },
-}
-
--- Colourful leaning buildings on both sides of the road.
-local function buildings(ctx: Ctx, palette: { Color3 }, minH: number?, maxH: number?, gap: number?)
+-- A few big factory silhouettes and lamp posts, well away from the lanes.
+local function yardScenery(ctx: Ctx)
 	local rng = ctx.rng
-	local offset = (gap or 0) + ROAD_WIDTH / 2
 	for _, side in { -1, 1 } do
-		local d = 0
-		while d < ctx.length do
-			local depth = rng:NextNumber(16, 28)
-			local width = rng:NextNumber(14, 24)
-			local height = rng:NextNumber(minH or 20, maxH or 60)
-			local actualDepth = math.min(depth, ctx.length - d)
-			local b = scenery(ctx, {
-				Name = "Building",
-				Size = Vector3.new(width, height, actualDepth - 1),
-				CFrame = CF(ctx, side * (offset + width / 2 + 2), height / 2, d + actualDepth / 2) * CFrame.Angles(0, 0, math.rad(rng:NextNumber(-3, 3))),
-				Color = palette[rng:NextInteger(1, #palette)],
-			})
-			-- windows
-			if height > 16 then
-				scenery(ctx, {
-					Name = "Windows",
-					Parent = b,
-					Size = Vector3.new(0.2, height * 0.7, actualDepth * 0.7),
-					CFrame = b.CFrame * CFrame.new(-side * (width / 2 + 0.1), height * 0.05, 0),
-					Color = Color3.fromRGB(255, 250, 200),
-					Material = Enum.Material.Neon,
-					Transparency = 0.4,
-					CanCollide = false,
-				})
+		for d = 20, ctx.length, 60 do
+			local pole = scenery(ctx, { Name = "LampPole", Size = Vector3.new(0.8, 14, 0.8), CFrame = CF(ctx, side * 18.5, 7, d), Color = Color3.fromRGB(45, 45, 55) })
+			local lamp = scenery(ctx, { Parent = pole, Name = "Lamp", Size = Vector3.new(3, 0.6, 1.4), CFrame = CF(ctx, side * 17, 14, d), Color = THEME.Toxic, Material = Enum.Material.Neon, CanCollide = false })
+			local light = Instance.new("SpotLight")
+			light.Face = Enum.NormalId.Bottom
+			light.Range = 26
+			light.Angle = 80
+			light.Brightness = 1.5
+			light.Color = THEME.Toxic
+			light.Parent = lamp
+		end
+		if rng:NextNumber() < 0.7 then
+			local h = rng:NextNumber(30, 70)
+			local w = rng:NextNumber(30, 60)
+			local factory = scenery(ctx, { Name = "Factory", Size = Vector3.new(w, h, rng:NextNumber(30, 60)), CFrame = CF(ctx, side * rng:NextNumber(60, 110), h / 2 - 1, rng:NextNumber(0, ctx.length)), Color = THEME.Silhouette })
+			scenery(ctx, { Parent = factory, Name = "Windows", Size = Vector3.new(0.2, h * 0.15, w * 0.6), CFrame = factory.CFrame * CFrame.new(-side * (w / 2 + 0.1), h * 0.2, 0) * CFrame.Angles(0, math.rad(90), 0), Color = if rng:NextNumber() < 0.5 then THEME.Toxic else THEME.Evil, Material = Enum.Material.Neon, Transparency = 0.2, CanCollide = false })
+			if rng:NextNumber() < 0.5 then
+				scenery(ctx, { Name = "Chimney", Size = Vector3.new(5, h * 0.6, 5), CFrame = factory.CFrame * CFrame.new(0, h * 0.75, 0), Color = THEME.Silhouette })
 			end
-			d += depth
 		end
-	end
-end
-
--- ── Biome scenery ──────────────────────────────────────────────
-
-local function blockTree(ctx: Ctx, x: number, d: number, leaves: Color3, snowy: boolean?)
-	local s = ctx.rng:NextNumber(0.9, 1.6)
-	scenery(ctx, { Name = "Trunk", Size = Vector3.new(2, 6, 2) * s, CFrame = CF(ctx, x, 3 * s, d), Color = Color3.fromRGB(120, 80, 45), Studs = true })
-	for i, size in { 9, 6.5, 4 } do
-		local layer = scenery(ctx, { Name = "Leaves", Size = Vector3.new(size, 3, size) * s, CFrame = CF(ctx, x, (4.5 + i * 2.6) * s, d), Color = leaves, Studs = true })
-		if snowy then
-			scenery(ctx, { Parent = layer, Name = "Snow", Size = Vector3.new(size * 0.9, 0.6, size * 0.9) * s, CFrame = layer.CFrame * CFrame.new(0, 1.7 * s, 0), Color = Color3.fromRGB(250, 252, 255), Material = Enum.Material.Snow })
-		end
-	end
-end
-
-local function grassScenery(ctx: Ctx)
-	local rng = ctx.rng
-	for _, side in { -1, 1 } do
-		-- Fence along the road
-		scenery(ctx, { Name = "FenceRail", Size = Vector3.new(0.5, 0.5, ctx.length), CFrame = CF(ctx, side * 16.5, 2.2, ctx.length / 2), Color = Color3.fromRGB(255, 255, 255) })
-		for d = 0, ctx.length, 10 do
-			scenery(ctx, { Name = "FencePost", Size = Vector3.new(0.8, 3, 0.8), CFrame = CF(ctx, side * 16.5, 1.5, d), Color = Color3.fromRGB(255, 255, 255) })
-		end
-		for _ = 1, 5 do
-			blockTree(ctx, side * rng:NextNumber(22, 70), rng:NextNumber(0, ctx.length), Color3.fromRGB(70, rng:NextInteger(160, 200), 60))
-		end
-		-- Rolling blocky hills
-		local h = rng:NextNumber(8, 22)
-		scenery(ctx, { Name = "Hill", Size = Vector3.new(40, h, 50), CFrame = CF(ctx, side * rng:NextNumber(70, 95), h / 2 - 1, rng:NextNumber(0, ctx.length)), Color = Color3.fromRGB(85, 175, 65), Material = Enum.Material.Grass, Studs = true })
-		for _ = 1, 4 do
-			scenery(ctx, { Name = "Flower", Size = Vector3.new(1, 1, 1), CFrame = CF(ctx, side * rng:NextNumber(18, 30), 0.4, rng:NextNumber(0, ctx.length)), Color = Color3.fromHSV(rng:NextNumber(), 0.7, 1) })
-		end
-	end
-end
-
-local function iceScenery(ctx: Ctx)
-	local rng = ctx.rng
-	for _, side in { -1, 1 } do
-		scenery(ctx, { Name = "SnowBank", Size = Vector3.new(4, 2.5, ctx.length), CFrame = CF(ctx, side * 17, 1, ctx.length / 2), Color = Color3.fromRGB(245, 250, 255), Material = Enum.Material.Snow })
-		for _ = 1, 4 do
-			blockTree(ctx, side * rng:NextNumber(22, 65), rng:NextNumber(0, ctx.length), Color3.fromRGB(40, 110, 70), true)
-		end
-		for _ = 1, 3 do
-			local h = rng:NextNumber(10, 30)
-			scenery(ctx, { Name = "IceSpike", Class = "WedgePart", Size = Vector3.new(4, h, 6), CFrame = CF(ctx, side * rng:NextNumber(24, 60), h / 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), Color = Color3.fromRGB(150, 220, 255), Material = Enum.Material.Glacier, Transparency = 0.15 })
-		end
-		local mountain = rng:NextNumber(40, 80)
-		scenery(ctx, { Name = "Mountain", Class = "WedgePart", Size = Vector3.new(60, mountain, 60), CFrame = CF(ctx, side * 110, mountain / 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, if side > 0 then -math.pi / 2 else math.pi / 2, 0), Color = Color3.fromRGB(235, 240, 250), Material = Enum.Material.Snow })
-	end
-end
-
-local function volcanoScenery(ctx: Ctx)
-	local rng = ctx.rng
-	for _, side in { -1, 1 } do
-		-- Lava rivers running beside the road
-		scenery(ctx, { Name = "LavaRiver", Size = Vector3.new(10, 0.4, ctx.length), CFrame = CF(ctx, side * 22, -0.1, ctx.length / 2), Color = Color3.fromRGB(255, 100, 20), Material = Enum.Material.Neon, CanCollide = false })
-		for _ = 1, 5 do
-			local size = rng:NextNumber(4, 12)
-			scenery(ctx, { Name = "Basalt", Size = Vector3.new(size, size * rng:NextNumber(0.6, 2), size), CFrame = CF(ctx, side * rng:NextNumber(30, 70), size / 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), Color = Color3.fromRGB(45, 35, 35), Material = Enum.Material.Basalt, Studs = true })
-		end
-		if rng:NextNumber() < 0.5 then
-			-- Distant volcano: stacked shrinking blocks with a glowing top
-			local base = CF(ctx, side * 120, 0, rng:NextNumber(0, ctx.length))
-			for i = 0, 4 do
-				local w = 70 - i * 13
-				scenery(ctx, { Name = "Volcano", Size = Vector3.new(w, 12, w), CFrame = base * CFrame.new(0, 6 + i * 12, 0), Color = Color3.fromRGB(60, 40, 35), Material = Enum.Material.Basalt, Studs = true })
-			end
-			scenery(ctx, { Name = "Crater", Size = Vector3.new(12, 2, 12), CFrame = base * CFrame.new(0, 61, 0), Color = Color3.fromRGB(255, 120, 30), Material = Enum.Material.Neon })
-		end
-	end
-end
-
-local function voidScenery(ctx: Ctx)
-	local rng = ctx.rng
-	for _, side in { -1, 1 } do
-		scenery(ctx, { Name = "NeonEdge", Size = Vector3.new(0.6, 0.6, ctx.length), CFrame = CF(ctx, side * 15.2, 0.3, ctx.length / 2), Color = Color3.fromRGB(255, 100, 255), Material = Enum.Material.Neon })
-		for _ = 1, 6 do
-			local size = rng:NextNumber(3, 10)
-			scenery(ctx, {
-				Name = "FloatingCube",
-				Size = Vector3.one * size,
-				CFrame = CF(ctx, side * rng:NextNumber(22, 80), rng:NextNumber(5, 50), rng:NextNumber(0, ctx.length)) * CFrame.Angles(rng:NextNumber(0, 6), rng:NextNumber(0, 6), 0),
-				Color = Color3.fromHSV(rng:NextNumber(0.7, 0.95), 0.7, 1),
-				Material = Enum.Material.Neon,
-				CanCollide = false,
-			})
-		end
-		for _ = 1, 3 do
-			local h = rng:NextNumber(8, 25)
-			scenery(ctx, { Name = "Crystal", Size = Vector3.new(3, h, 3), CFrame = CF(ctx, side * rng:NextNumber(20, 50), h / 2 - 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, 0.5, math.rad(rng:NextNumber(-15, 15))), Color = Color3.fromRGB(120, 255, 240), Material = Enum.Material.Glass, Transparency = 0.2 })
-		end
-	end
-end
-
--- Scenery for the current biome (City uses buildings with an optional palette).
-local function sideScenery(ctx: Ctx, cityPalette: { Color3 }?, minH: number?, maxH: number?)
-	local id = ctx.biome.id
-	if id == "Grasslands" then
-		grassScenery(ctx)
-	elseif id == "Ice" then
-		iceScenery(ctx)
-	elseif id == "Volcano" then
-		volcanoScenery(ctx)
-	elseif id == "Void" then
-		voidScenery(ctx)
-	else
-		buildings(ctx, cityPalette or PALETTES.City, minH, maxH)
 	end
 end
 
@@ -283,14 +150,14 @@ local function coin(ctx: Ctx, lane: number, y: number, d: number)
 		Shape = Enum.PartType.Cylinder,
 		Size = Vector3.new(0.4, 2.2, 2.2),
 		CFrame = CF(ctx, LANES[lane], y + 1.6, d) * CFrame.Angles(0, math.rad(90), 0),
-		Color = ctx.biome.coinColor,
+		Color = THEME.Coin,
 		Material = Enum.Material.Neon,
 		CanCollide = false,
 		CanQuery = false,
 		CastShadow = false,
 	})
 	c:SetAttribute("Coin", true)
-	c:SetAttribute("Value", ctx.biome.coinValue)
+	c:SetAttribute("Value", Config.Economy.CoinValue)
 end
 
 local function coinLine(ctx: Ctx, lane: number, d0: number, d1: number, y: number?)
@@ -301,37 +168,43 @@ local function coinLine(ctx: Ctx, lane: number, d0: number, d1: number, y: numbe
 	end
 end
 
--- Coins along the exact jump arc over a low obstacle at d: built from the
--- runner's jump physics (speed here, gravity in this biome), so jumping at
--- the obstacle sweeps straight through every coin.
+-- Coins along the exact jump arc over a low obstacle at d, built from the
+-- runner's jump physics so a jump sweeps straight through every coin.
 local function coinArc(ctx: Ctx, lane: number, d: number)
 	local meters = (ctx.startD + d) * Config.Run.MetersPerStud
-	local profile = ImpactRules.JumpProfile(ImpactRules.SpeedAt(meters), ctx.biome.gravityScale)
+	local profile = ImpactRules.JumpProfile(ImpactRules.SpeedAt(meters))
 	local count = math.clamp(math.floor(profile.length / 5), 5, 11)
 	for i = 0, count - 1 do
-		local t = i / (count - 1) -- 0..1 across the jump
-		local height = 4 * profile.apex * t * (1 - t)
-		coin(ctx, lane, height, d - profile.length / 2 + t * profile.length)
+		local t = i / (count - 1)
+		coin(ctx, lane, 4 * profile.apex * t * (1 - t), d - profile.length / 2 + t * profile.length)
 	end
 end
 
-local function pickup(ctx: Ctx, lane: number, d: number, kind: "Equipment" | "Crate", y: number?)
-	local color = if kind == "Crate" then Color3.fromRGB(255, 180, 30) else Color3.fromRGB(170, 90, 255)
+-- Floating pickup box (power-up or mystery box).
+local function pickupBox(ctx: Ctx, lane: number, d: number, kind: string, color: Color3, label: string, y: number?): BasePart
 	local box = Util.Part({
 		Name = kind .. "Pickup",
 		Parent = ctx.folder:FindFirstChild("Pickups"),
-		Size = Vector3.new(2.6, 2.6, 2.6),
-		CFrame = CF(ctx, LANES[lane], (y or 0) + 2.4, d) * CFrame.Angles(0, math.rad(45), 0),
+		Size = Vector3.new(2.8, 2.8, 2.8),
+		CFrame = CF(ctx, LANES[lane], (y or 0) + 2.6, d) * CFrame.Angles(0, math.rad(45), 0),
 		Color = color,
 		Material = Enum.Material.Neon,
 		CanCollide = false,
 		CanQuery = false,
 	})
 	box:SetAttribute("Pickup", kind)
-	if kind == "Crate" then
-		box:SetAttribute("CrateId", "Common")
-	end
-	Util.SurfaceLabel(box, Enum.NormalId.Front, if kind == "Crate" then "📦" else "?", { PixelsPerStud = 20 })
+	Util.Billboard(box, label, UDim2.fromOffset(70, 70), Vector3.new(0, 3.2, 0))
+	return box
+end
+
+local function powerUp(ctx: Ctx, lane: number, d: number, y: number?)
+	local p = PowerUpData.Pick(ctx.rng)
+	local box = pickupBox(ctx, lane, d, "PowerUp", p.color, p.icon, y)
+	box:SetAttribute("PowerUpId", p.id)
+end
+
+local function mysteryBox(ctx: Ctx, lane: number, d: number, y: number?)
+	pickupBox(ctx, lane, d, "MysteryBox", Color3.fromRGB(255, 180, 30), "❓", y)
 end
 
 -- ───────────────────────────── obstacles ─────────────────────────────
@@ -375,7 +248,7 @@ builders.OverheadSign = function(ctx, lane, d)
 		solid(m, { Name = "Post", Size = Vector3.new(0.4, 10.5, 0.4), CFrame = CF(ctx, x + side * 3.7, 5.25, d), Color = Color3.fromRGB(80, 80, 90), Material = Enum.Material.Metal })
 	end
 	local board = solid(m, { Name = "Board", Size = Vector3.new(7, 7, 0.4), CFrame = CF(ctx, x, 3.4 + 3.5, d), Color = Color3.fromRGB(40, 140, 255) })
-	local texts = { "SLIDE!", "DUCK!", "SAHUR\nCROSSING", "⬇️ ROLL ⬇️", "NO\nTRALALA" }
+	local texts = { "VERITY\nINDUSTRIES", "⬇️ ROLL ⬇️", "NO\nESCAPE", "DUCK!", "RESTRICTED" }
 	Util.SurfaceLabel(board, Enum.NormalId.Back, texts[ctx.rng:NextInteger(1, #texts)], { PixelsPerStud = 20 })
 	Destruction.Setup(m, 1, "Shatter", "Metal")
 	return m
@@ -431,49 +304,16 @@ builders.ConcreteWall = function(ctx, lane, d)
 	return m
 end
 
-builders.Car = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "Car", lane)
-	local x = LANES[lane]
-	local colors = { Color3.fromRGB(230, 50, 60), Color3.fromRGB(50, 120, 230), Color3.fromRGB(250, 200, 40), Color3.fromRGB(240, 240, 240) }
-	local color = colors[ctx.rng:NextInteger(1, #colors)]
-	solid(m, { Name = "Body", Size = Vector3.new(6, 2.6, 10), CFrame = CF(ctx, x, 2, d + 5), Color = color, Material = Enum.Material.SmoothPlastic })
-	solid(m, { Name = "Cabin", Size = Vector3.new(5.4, 2.2, 5.5), CFrame = CF(ctx, x, 4.4, d + 5.8), Color = Color3.fromRGB(120, 190, 230), Material = Enum.Material.Glass })
-	for _, sx in { -1, 1 } do
-		for _, sz in { 1.8, 8.2 } do
-			scenery(ctx, { Parent = m, Name = "Wheel", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.8, 2, 2), CFrame = CF(ctx, x + sx * 3, 1, d + sz), Color = Color3.fromRGB(25, 25, 25), CanCollide = false })
-		end
-	end
-	Destruction.Setup(m, 2, "Shatter", "Metal")
-	return m
-end
-
 -- A long subway car. Its roof is walkable (reach it with a ramp).
 builders.TrainCar = function(ctx, lane, d)
 	local m = obstacleModel(ctx, "TrainCar", lane)
 	local x = LANES[lane]
 	local len = 40
-	local colors = { Color3.fromRGB(240, 70, 70), Color3.fromRGB(60, 170, 240), Color3.fromRGB(250, 190, 40) }
+	local colors = { Color3.fromRGB(70, 60, 90), Color3.fromRGB(110, 40, 60), Color3.fromRGB(50, 80, 70) }
 	solid(m, { Name = "Body", Size = Vector3.new(7, 9.8, len), CFrame = CF(ctx, x, 4.9, d + len / 2), Color = colors[ctx.rng:NextInteger(1, #colors)], Material = Enum.Material.Metal })
 	ground(ctx, { Parent = m, Name = "Roof", Size = Vector3.new(7, 0.4, len), CFrame = CF(ctx, x, 10, d + len / 2), Color = Color3.fromRGB(150, 150, 160), Material = Enum.Material.DiamondPlate })
 	local front = scenery(ctx, { Parent = m, Name = "Front", Size = Vector3.new(6, 4, 0.2), CFrame = CF(ctx, x, 6, d - 0.1), Color = Color3.fromRGB(30, 30, 40), CanCollide = false })
-	Util.SurfaceLabel(front, Enum.NormalId.Back, "🧠 EXPRESS", { PixelsPerStud = 15, TextColor = Color3.fromRGB(255, 220, 90) })
-	Destruction.Setup(m, 4)
-	return m
-end
-
--- A pool of lava across one lane: jump it! (Touching it is a bump.)
-builders.LavaPool = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "LavaPool", lane)
-	local x = LANES[lane]
-	solid(m, { Name = "Lava", Size = Vector3.new(7.4, 1.2, 8), CFrame = CF(ctx, x, 0.6, d), Color = Color3.fromRGB(255, 110, 20), Material = Enum.Material.Neon })
-	for _, dz in { -4.3, 4.3 } do
-		scenery(ctx, { Parent = m, Name = "Crust", Size = Vector3.new(7.6, 1.4, 0.6), CFrame = CF(ctx, x, 0.7, d + dz), Color = Color3.fromRGB(40, 30, 30), Material = Enum.Material.Basalt, CanCollide = false })
-	end
-	local glow = Instance.new("PointLight")
-	glow.Color = Color3.fromRGB(255, 120, 40)
-	glow.Range = 14
-	glow.Brightness = 2
-	glow.Parent = m:FindFirstChild("Lava")
+	Util.SurfaceLabel(front, Enum.NormalId.Back, "☣️ VERITY CARGO", { PixelsPerStud = 15, TextColor = Color3.fromRGB(140, 255, 90) })
 	Destruction.Setup(m, 4)
 	return m
 end
@@ -492,23 +332,8 @@ local function ramp(ctx: Ctx, lane: number, d: number, length: number)
 	return r
 end
 
--- Parts that keep their own colours when a biome reskins an obstacle.
-local KEEP_COLOR = { Stripe = true, Front = true, Wheel = true, Cabin = true, Roof = true, Lava = true }
-
 function Segments.Obstacle(ctx: Ctx, kind: string, lane: number, d: number): Model
-	local model = builders[kind](ctx, lane, d)
-	local skin = ctx.biome.recolor[kind]
-	if skin then
-		for _, p in model:GetDescendants() do
-			if p:IsA("BasePart") and not KEEP_COLOR[p.Name] then
-				local shade = 0.9 + ctx.rng:NextNumber() * 0.15
-				p.Color = Color3.new(math.min(1, skin.color.R * shade), math.min(1, skin.color.G * shade), math.min(1, skin.color.B * shade))
-				p.Material = skin.material
-			end
-		end
-		model:SetAttribute("Material", skin.material.Name)
-	end
-	return model
+	return builders[kind](ctx, lane, d)
 end
 
 -- ───────────────────────────── row generation ─────────────────────────────
@@ -530,9 +355,9 @@ local function pick<T>(rng: Random, weighted: { [T]: number }): T
 	return last
 end
 
--- Places rows of obstacles between d0 and d1. Every row always leaves at
--- least one lane that can be passed without destroying anything (a free
--- lane, or a jump/roll obstacle), and coins guide the player through gaps.
+-- Rows of obstacles between d0 and d1. Rows are well spaced (the lanes stay
+-- readable), every row leaves a way through without breaking anything, and
+-- coin lines guide you through the gaps.
 local function obstacleRows(ctx: Ctx, d0: number, d1: number, kinds: { [string]: number }, skipLanes: { [number]: boolean }?)
 	local rng = ctx.rng
 	local skip = skipLanes or {}
@@ -545,16 +370,15 @@ local function obstacleRows(ctx: Ctx, d0: number, d1: number, kinds: { [string]:
 	if #open == 0 then
 		return
 	end
-	local spacing = Util.Lerp(42, 26, ctx.difficulty)
+	local spacing = Util.Lerp(55, 32, ctx.difficulty)
 	local d = d0
 	while d <= d1 do
-		local freeChance = Util.Lerp(0.55, 0.25, ctx.difficulty)
+		local freeChance = Util.Lerp(0.6, 0.3, ctx.difficulty)
 		local row: { [number]: string? } = {}
 		local passable = 0
 		local blocks = 0
 		for _, lane in open do
 			if rng:NextNumber() < freeChance then
-				row[lane] = nil
 				passable += 1
 			else
 				local kind = pick(rng, kinds)
@@ -576,35 +400,36 @@ local function obstacleRows(ctx: Ctx, d0: number, d1: number, kinds: { [string]:
 			local kind = row[lane]
 			if kind then
 				Segments.Obstacle(ctx, kind, lane, d)
-				if kind == "Barricade" or kind == "SteelBarrier" or kind == "LavaPool" then
-					if lane == coinLane then
-						coinArc(ctx, lane, d)
-					end
+				if (kind == "Barricade" or kind == "SteelBarrier") and lane == coinLane then
+					coinArc(ctx, lane, d)
 				end
 			elseif lane == coinLane then
-				coinLine(ctx, lane, d - spacing * 0.35, d + spacing * 0.35)
+				coinLine(ctx, lane, d - spacing * 0.4, d + spacing * 0.4)
 			end
 		end
 		d += spacing + rng:NextNumber(-4, 4)
 	end
 end
 
-local function maybeEquipmentPickup(ctx: Ctx, chance: number)
-	if ctx.rng:NextNumber() < chance then
-		-- Placed in the safe zone at the start of the segment so it never
-		-- overlaps an obstacle.
-		pickup(ctx, LANE_IDS[ctx.rng:NextInteger(1, 3)], Config.Run.SafeZoneAtSegmentEdges * 0.5, "Equipment")
+local EDGE = Config.Run.SafeZoneAtSegmentEdges
+
+-- Power-ups and mystery boxes sit in the calm stretch at the start of a
+-- segment so they never overlap an obstacle.
+local function maybePickups(ctx: Ctx)
+	local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
+	if ctx.rng:NextNumber() < Config.PowerUps.SpawnChancePerSegment then
+		powerUp(ctx, lane, EDGE * 0.5)
+	elseif ctx.rng:NextNumber() < 0.15 then
+		mysteryBox(ctx, lane, EDGE * 0.5)
 	end
 end
 
-local EDGE = Config.Run.SafeZoneAtSegmentEdges
-
 -- ───────────────────────────── segment types ─────────────────────────────
 
--- Which segments appear (and how often) is decided per biome by
--- BiomeData.segmentWeights.
 export type SegmentDef = {
 	name: string,
+	weight: number,
+	minDistance: number,
 	cooldown: number, -- segments that must pass before this can repeat
 	build: (ctx: Ctx) -> (),
 }
@@ -615,170 +440,29 @@ local function define(def: SegmentDef)
 	table.insert(defs, def)
 end
 
+-- The bread and butter: open yard, barriers to jump, gantries to roll under.
 define({
-	name = "Straight",
+	name = "Yard",
+	weight = 10,
+	minDistance = 0,
 	cooldown = 0,
 	build = function(ctx)
-		road(ctx)
-		sideScenery(ctx)
-		local kinds = { Barricade = 3, OverheadSign = 3, Crates = 2, SteelBarrier = 1, WoodWall = 1 }
-		if ctx.biome.id == "Volcano" then
-			kinds.LavaPool = 3
-		end
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, kinds)
-		maybeEquipmentPickup(ctx, 0.2)
+		yardFloor(ctx)
+		yardScenery(ctx)
+		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { Barricade = 4, OverheadSign = 3, Crates = 2, SteelBarrier = 1 })
+		maybePickups(ctx)
 	end,
 })
 
+-- Freight trains: switch lanes around them, or take the ramp and run the roofs.
 define({
-	name = "Intersection",
+	name = "Trains",
+	weight = 8,
+	minDistance = 60,
 	cooldown = 1,
 	build = function(ctx)
-		road(ctx)
-		local mid = ctx.length / 2
-		-- Cross street and crosswalk stripes
-		scenery(ctx, { Name = "CrossRoad", Size = Vector3.new(160, 1.9, 30), CFrame = CF(ctx, 0, -1.02, mid), Color = Color3.fromRGB(55, 55, 65), Material = Enum.Material.Asphalt })
-		for i = -6, 6 do
-			scenery(ctx, { Name = "Crosswalk", Size = Vector3.new(1.4, 0.06, 6), CFrame = CF(ctx, i * 2.2, 0.03, mid - 10), Color = Color3.fromRGB(245, 245, 245), CanCollide = false })
-		end
-		for _, side in { -1, 1 } do
-			scenery(ctx, { Name = "TrafficPole", Size = Vector3.new(0.6, 14, 0.6), CFrame = CF(ctx, side * 16, 7, mid - 14), Color = Color3.fromRGB(60, 60, 60) })
-			local light = scenery(ctx, { Name = "TrafficLight", Size = Vector3.new(1.5, 4, 1.5), CFrame = CF(ctx, side * 16, 15, mid - 14), Color = Color3.fromRGB(30, 30, 30) })
-			scenery(ctx, { Parent = light, Name = "Red", Shape = Enum.PartType.Ball, Size = Vector3.one, CFrame = light.CFrame * CFrame.new(0, 1, 0.8), Color = Color3.fromRGB(255, 40, 40), Material = Enum.Material.Neon, CanCollide = false })
-		end
-		-- buildings only before/after the crossing
-		local saved = ctx.length
-		ctx.length = mid - 16
-		buildings(ctx, PALETTES.City)
-		ctx.length = saved
-		obstacleRows(ctx, EDGE + 10, mid - 18, { Car = 3, Barricade = 2, OverheadSign = 1 })
-		obstacleRows(ctx, mid + 18, ctx.length - EDGE, { Car = 3, Barricade = 2, Crates = 1 })
-	end,
-})
-
-define({
-	name = "Alley",
-	cooldown = 1,
-	build = function(ctx)
-		road(ctx, Color3.fromRGB(45, 42, 50), Enum.Material.Cobblestone)
-		for _, side in { -1, 1 } do
-			scenery(ctx, { Name = "AlleyWall", Size = Vector3.new(4, 45, ctx.length), CFrame = CF(ctx, side * 15, 22.5, ctx.length / 2), Color = Color3.fromRGB(80, 60, 70), Material = Enum.Material.Brick })
-			for d = 10, ctx.length - 10, 30 do
-				scenery(ctx, { Name = "Lamp", Size = Vector3.new(0.6, 1.2, 1.2), CFrame = CF(ctx, side * 12.8, 11, d), Color = Color3.fromRGB(255, 200, 120), Material = Enum.Material.Neon, CanCollide = false })
-			end
-		end
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { Crates = 3, OverheadPipe = 3, Barricade = 2, WoodWall = 1 })
-		maybeEquipmentPickup(ctx, 0.25)
-	end,
-})
-
-define({
-	name = "Construction",
-	cooldown = 2,
-	build = function(ctx)
-		road(ctx, Color3.fromRGB(110, 90, 70), Enum.Material.Ground)
-		buildings(ctx, PALETTES.Industrial, 10, 30, 6)
-		for d = 6, ctx.length, 14 do
-			for _, side in { -1, 1 } do
-				scenery(ctx, { Name = "Cone", Size = Vector3.new(1, 2, 1), CFrame = CF(ctx, side * 12.5, 1, d), Color = Color3.fromRGB(255, 120, 20) })
-			end
-		end
-		-- A crane arm over the road for flavour
-		scenery(ctx, { Name = "CraneTower", Size = Vector3.new(3, 60, 3), CFrame = CF(ctx, 22, 30, ctx.length / 2), Color = Color3.fromRGB(255, 200, 40), Material = Enum.Material.Metal })
-		scenery(ctx, { Name = "CraneArm", Size = Vector3.new(50, 2.5, 2.5), CFrame = CF(ctx, 2, 58, ctx.length / 2), Color = Color3.fromRGB(255, 200, 40), Material = Enum.Material.Metal })
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { WoodWall = 3, Barricade = 3, OverheadSign = 2, ConcreteWall = 1 })
-		maybeEquipmentPickup(ctx, 0.3)
-	end,
-})
-
-define({
-	name = "ParkingLot",
-	cooldown = 2,
-	build = function(ctx)
-		road(ctx, Color3.fromRGB(70, 70, 78))
-		-- Parked cars in bays on both sides (scenery only)
-		for _, side in { -1, 1 } do
-			ground(ctx, { Name = "Lot", Size = Vector3.new(40, 1.9, ctx.length), CFrame = CF(ctx, side * 35, -1.02, ctx.length / 2), Color = Color3.fromRGB(80, 80, 88), Material = Enum.Material.Asphalt })
-			for d = 8, ctx.length - 8, 12 do
-				if ctx.rng:NextNumber() < 0.7 then
-					scenery(ctx, { Name = "ParkedCar", Size = Vector3.new(10, 3.5, 5.5), CFrame = CF(ctx, side * 30, 1.75, d), Color = Color3.fromHSV(ctx.rng:NextNumber(), 0.7, 0.9) })
-				end
-				scenery(ctx, { Name = "BayLine", Size = Vector3.new(12, 0.05, 0.3), CFrame = CF(ctx, side * 30, 0.03, d + 6), Color = Color3.fromRGB(240, 240, 240), CanCollide = false })
-			end
-		end
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { Car = 4, Barricade = 2, Crates = 1 })
-	end,
-})
-
-define({
-	name = "Tunnel",
-	cooldown = 2,
-	build = function(ctx)
-		road(ctx, Color3.fromRGB(50, 45, 55), Enum.Material.Concrete)
-		for _, side in { -1, 1 } do
-			local ice = ctx.biome.id == "Ice"
-			scenery(ctx, { Name = "TunnelWall", Size = Vector3.new(3, 22, ctx.length), CFrame = CF(ctx, side * 15.5, 11, ctx.length / 2), Color = if ice then Color3.fromRGB(150, 210, 245) else Color3.fromRGB(90, 90, 100), Material = if ice then Enum.Material.Glacier else Enum.Material.Concrete })
-			for d = 5, ctx.length - 5, 15 do
-				scenery(ctx, { Name = "TunnelLight", Size = Vector3.new(0.3, 1, 5), CFrame = CF(ctx, side * 13.9, 16, d), Color = Color3.fromRGB(200, 255, 255), Material = Enum.Material.Neon, CanCollide = false })
-			end
-		end
-		local iceRoof = ctx.biome.id == "Ice"
-		scenery(ctx, { Name = "TunnelRoof", Size = Vector3.new(34, 2, ctx.length), CFrame = CF(ctx, 0, 23, ctx.length / 2), Color = if iceRoof then Color3.fromRGB(170, 225, 250) else Color3.fromRGB(70, 70, 80), Material = if iceRoof then Enum.Material.Ice else Enum.Material.Concrete })
-		-- Occasionally a parked train with a ramp in one lane.
-		local skip = {}
-		if ctx.rng:NextNumber() < 0.5 then
-			local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
-			ramp(ctx, lane, EDGE + 6, 26)
-			Segments.Obstacle(ctx, "TrainCar", lane, EDGE + 32)
-			coinLine(ctx, lane, EDGE + 36, EDGE + 68, 10.2)
-			skip[lane] = true
-		end
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { SteelBarrier = 3, OverheadPipe = 3, Crates = 1 }, skip)
-	end,
-})
-
-define({
-	name = "Highway",
-	cooldown = 1,
-	build = function(ctx)
-		road(ctx, Color3.fromRGB(45, 45, 52))
-		for _, side in { -1, 1 } do
-			scenery(ctx, { Name = "GuardRail", Size = Vector3.new(0.6, 2.4, ctx.length), CFrame = CF(ctx, side * 13.5, 1.2, ctx.length / 2), Color = Color3.fromRGB(190, 190, 200), Material = Enum.Material.Metal })
-			scenery(ctx, { Name = "Drop", Size = Vector3.new(80, 2, ctx.length), CFrame = CF(ctx, side * 56, -30, ctx.length / 2), Color = ctx.biome.ground.color, Material = ctx.biome.ground.material })
-		end
-		-- Overhead gantry sign
-		local gantry = scenery(ctx, { Name = "Gantry", Size = Vector3.new(32, 5, 1), CFrame = CF(ctx, 0, 20, ctx.length / 2), Color = Color3.fromRGB(30, 120, 60) })
-		Util.SurfaceLabel(gantry, Enum.NormalId.Back, "⬆️ SAHUR CITY  ·  NO EXIT", { PixelsPerStud = 12 })
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { Car = 3, ConcreteWall = 2, SteelBarrier = 2, OverheadSign = 1 })
-		maybeEquipmentPickup(ctx, 0.2)
-	end,
-})
-
-define({
-	name = "Building",
-	cooldown = 2,
-	build = function(ctx)
-		road(ctx, Color3.fromRGB(180, 170, 160), Enum.Material.Marble)
-		-- Run straight through the ground floor of a building.
-		for _, side in { -1, 1 } do
-			scenery(ctx, { Name = "InnerWall", Size = Vector3.new(2, 16, ctx.length), CFrame = CF(ctx, side * 15, 8, ctx.length / 2), Color = Color3.fromRGB(230, 220, 200) })
-		end
-		scenery(ctx, { Name = "Ceiling", Size = Vector3.new(32, 2, ctx.length), CFrame = CF(ctx, 0, 17, ctx.length / 2), Color = Color3.fromRGB(240, 235, 225) })
-		scenery(ctx, { Name = "Upstairs", Size = Vector3.new(32, 40, ctx.length), CFrame = CF(ctx, 0, 38, ctx.length / 2), Color = PALETTES.City[ctx.rng:NextInteger(1, 5)] })
-		for d = 10, ctx.length - 10, 20 do
-			scenery(ctx, { Name = "CeilingLight", Size = Vector3.new(20, 0.3, 2), CFrame = CF(ctx, 0, 15.9, d), Color = Color3.fromRGB(255, 255, 230), Material = Enum.Material.Neon, CanCollide = false })
-		end
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { WoodWall = 3, ConcreteWall = 2, Crates = 2, OverheadSign = 1 })
-	end,
-})
-
-define({
-	name = "Ramp",
-	cooldown = 2,
-	build = function(ctx)
-		road(ctx)
-		sideScenery(ctx)
-		-- Two or three train cars; one has a ramp so you can run on the roofs.
+		yardFloor(ctx)
+		yardScenery(ctx)
 		local rampLane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
 		ramp(ctx, rampLane, EDGE, 26)
 		Segments.Obstacle(ctx, "TrainCar", rampLane, EDGE + 26)
@@ -786,202 +470,149 @@ define({
 		coinLine(ctx, rampLane, EDGE + 28, EDGE + 104, 10.2)
 		local skip = { [rampLane] = true }
 		for _, lane in LANE_IDS do
-			if lane ~= rampLane and ctx.rng:NextNumber() < 0.6 then
+			if lane ~= rampLane and ctx.rng:NextNumber() < 0.55 then
 				Segments.Obstacle(ctx, "TrainCar", lane, EDGE + ctx.rng:NextNumber(20, 55))
 				skip[lane] = true
 			end
 		end
-		obstacleRows(ctx, EDGE + 20, ctx.length - EDGE, { Barricade = 2, OverheadSign = 2 }, skip)
+		obstacleRows(ctx, EDGE + 25, ctx.length - EDGE, { Barricade = 2, OverheadSign = 2 }, skip)
+		maybePickups(ctx)
 	end,
 })
 
--- Alternate path: the middle lane is sealed off by a concrete "vault" wall.
--- Blow it up or smash through it and the sealed lane is full of loot.
+-- Through one of Verity's factory halls: pipes to roll under, steel to jump.
 define({
-	name = "Destruction",
-	cooldown = 3,
+	name = "Factory",
+	weight = 4,
+	minDistance = 250,
+	cooldown = 2,
 	build = function(ctx)
-		road(ctx)
-		sideScenery(ctx, PALETTES.Industrial, 15, 40)
+		yardFloor(ctx)
+		for _, side in { -1, 1 } do
+			scenery(ctx, { Name = "HallWall", Size = Vector3.new(3, 22, ctx.length), CFrame = CF(ctx, side * 16.5, 11, ctx.length / 2), Color = THEME.Silhouette, Material = Enum.Material.DiamondPlate })
+			for d = 10, ctx.length - 10, 25 do
+				scenery(ctx, { Name = "HallLight", Size = Vector3.new(0.3, 1.2, 6), CFrame = CF(ctx, side * 14.9, 15, d), Color = THEME.Evil, Material = Enum.Material.Neon, CanCollide = false })
+			end
+		end
+		scenery(ctx, { Name = "HallRoof", Size = Vector3.new(36, 2, ctx.length), CFrame = CF(ctx, 0, 23, ctx.length / 2), Color = THEME.Silhouette })
+		local sign = scenery(ctx, { Name = "HallSign", Size = Vector3.new(24, 4, 0.5), CFrame = CF(ctx, 0, 18.5, 2), Color = Color3.fromRGB(20, 15, 30) })
+		Util.SurfaceLabel(sign, Enum.NormalId.Back, ("☣️ %s INDUSTRIES ☣️"):format(Config.Villain.Title), { PixelsPerStud = 14, TextColor = THEME.Toxic })
+		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { SteelBarrier = 3, OverheadPipe = 3, Crates = 1 })
+		maybePickups(ctx)
+	end,
+})
+
+-- Smash zone: wooden walls to crash through at speed (or dodge).
+define({
+	name = "Smash",
+	weight = 4,
+	minDistance = 400,
+	cooldown = 2,
+	build = function(ctx)
+		yardFloor(ctx)
+		yardScenery(ctx)
+		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { WoodWall = 4, Crates = 2, Barricade = 2, ConcreteWall = 1 })
+		maybePickups(ctx)
+	end,
+})
+
+-- Bonus vault: the middle lane is sealed by a wall. Break in for loot.
+define({
+	name = "Vault",
+	weight = 3,
+	minDistance = 300,
+	cooldown = 4,
+	build = function(ctx)
+		yardFloor(ctx)
+		yardScenery(ctx)
 		local vaultStart = EDGE + 20
 		local vaultEnd = ctx.length - EDGE - 6
-		local entrance = Segments.Obstacle(ctx, if ctx.rng:NextNumber() < 0.5 then "ConcreteWall" else "WoodWall", 0, vaultStart)
+		local entrance = Segments.Obstacle(ctx, if ctx.rng:NextNumber() < 0.6 then "WoodWall" else "ConcreteWall", 0, vaultStart)
 		entrance:SetAttribute("Vault", true)
 		local sign = scenery(ctx, { Name = "VaultSign", Size = Vector3.new(7, 2.5, 0.3), CFrame = CF(ctx, 0, 13.5, vaultStart), Color = Color3.fromRGB(255, 60, 60), Material = Enum.Material.Neon })
 		Util.SurfaceLabel(sign, Enum.NormalId.Back, "💥 BONUS 💥", { PixelsPerStud = 20 })
-		-- Indestructible dividers between the vault and the side lanes.
 		for _, side in { -1, 1 } do
 			-- Lane 99: never "in front" of the runner, so touching it is always a side bump.
 			local divider = obstacleModel(ctx, "VaultDivider", 99)
 			divider:SetAttribute("ObstacleType", "Block")
-			solid(divider, { Name = "Divider", Size = Vector3.new(0.8, 12, vaultEnd - vaultStart), CFrame = CF(ctx, side * 4, 6, (vaultStart + vaultEnd) / 2), Color = Color3.fromRGB(120, 120, 130), Material = Enum.Material.Concrete })
+			solid(divider, { Name = "Divider", Size = Vector3.new(0.8, 12, vaultEnd - vaultStart), CFrame = CF(ctx, side * 4, 6, (vaultStart + vaultEnd) / 2), Color = THEME.Wall, Material = Enum.Material.Concrete })
 			Destruction.Setup(divider, 4)
 		end
-		-- Loot inside
 		coinLine(ctx, 0, vaultStart + 6, vaultEnd - 6)
-		pickup(ctx, 0, (vaultStart + vaultEnd) / 2, "Crate")
-		pickup(ctx, 0, vaultEnd - 10, "Equipment")
-		-- Weak walls in the side lanes to crash through or dodge.
-		obstacleRows(ctx, vaultStart + 14, vaultEnd, { WoodWall = 2, Barricade = 2, OverheadSign = 2, Crates = 2 }, { [0] = true })
-		-- One side lane gets smashable crates at the vault entrance, the other stays open.
+		mysteryBox(ctx, 0, (vaultStart + vaultEnd) / 2)
+		obstacleRows(ctx, vaultStart + 14, vaultEnd, { Barricade = 2, OverheadSign = 2, Crates = 1 }, { [0] = true })
 		Segments.Obstacle(ctx, "Crates", if ctx.rng:NextNumber() < 0.5 then -1 else 1, vaultStart)
 	end,
 })
 
+-- A caged Brainrot on the tracks: run through the cage to rescue it.
+-- Rescued Brainrots go to your base and raise your score multiplier.
 define({
-	name = "BrainrotSpecial",
-	cooldown = 4,
+	name = "Rescue",
+	weight = 5,
+	minDistance = 120,
+	cooldown = 3,
 	build = function(ctx)
-		road(ctx, Color3.fromRGB(255, 150, 210), Enum.Material.SmoothPlastic)
-		-- A Brainrot stands in one lane inside a glowing ring: run through it to
-		-- catch it. Caught Brainrots go to your base and earn coins.
-		local brainrotId = BiomeData.PickBrainrot(ctx.biome, ctx.rng)
-		local brainrot = if brainrotId then BrainrotData.Get(brainrotId) else nil
+		yardFloor(ctx)
+		yardScenery(ctx)
+		local brainrot = BrainrotData.PickCatchable(ctx.distance, ctx.rng)
 		if brainrot then
 			local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
 			local d = ctx.length / 2
-			local ring = Util.Part({
-				Name = "BrainrotCatch",
+			local color = BrainrotData.RarityColors[brainrot.rarity] or THEME.Coin
+			-- The pickup is the glowing floor plate; the cage and Brainrot hang off it.
+			local plate = Util.Part({
+				Name = "BrainrotCage",
 				Parent = ctx.folder:FindFirstChild("Pickups"),
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(0.4, 7.5, 7.5),
-				CFrame = CF(ctx, LANES[lane], 0.25, d) * CFrame.Angles(0, 0, math.rad(90)),
-				Color = BrainrotData.RarityColors[brainrot.rarity] or Color3.fromRGB(255, 220, 90),
+				Size = Vector3.new(6.5, 0.4, 6.5),
+				CFrame = CF(ctx, LANES[lane], 0.2, d),
+				Color = color,
 				Material = Enum.Material.Neon,
-				Transparency = 0.2,
 				CanCollide = false,
 				CanQuery = false,
 			})
-			ring:SetAttribute("Pickup", "Brainrot")
-			ring:SetAttribute("BrainrotId", brainrot.id)
-			local model = ModelFactory.Brainrot(brainrot.id, 1.1)
+			plate:SetAttribute("Pickup", "Brainrot")
+			plate:SetAttribute("BrainrotId", brainrot.id)
+			for _, corner in { Vector3.new(-3, 0, -3), Vector3.new(3, 0, -3), Vector3.new(-3, 0, 3), Vector3.new(3, 0, 3) } do
+				Util.Part({ Parent = plate, Name = "CageBar", Size = Vector3.new(0.4, 9, 0.4), CFrame = CF(ctx, LANES[lane] + corner.X, 4.7, d + corner.Z), Color = Color3.fromRGB(60, 60, 70), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false })
+			end
+			for i = -1, 1 do
+				Util.Part({ Parent = plate, Name = "CageBar", Size = Vector3.new(0.25, 9, 0.25), CFrame = CF(ctx, LANES[lane] + i * 1.5, 4.7, d - 3), Color = Color3.fromRGB(60, 60, 70), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false })
+			end
+			Util.Part({ Parent = plate, Name = "CageTop", Size = Vector3.new(6.8, 0.5, 6.8), CFrame = CF(ctx, LANES[lane], 9.3, d), Color = Color3.fromRGB(60, 60, 70), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false })
+			local model = ModelFactory.Brainrot(brainrot.id, 0.9)
 			model:PivotTo(CF(ctx, LANES[lane], 0.4, d) * CFrame.Angles(0, math.pi, 0))
-			model.Parent = ring
-			ModelFactory.NameTag(model, ("%s %s — CATCH ME!"):format(brainrot.icon, string.upper(brainrot.name)), BrainrotData.RarityColors[brainrot.rarity], 11)
-			-- Keep its lane clear right around it.
-			coinLine(ctx, lane, d - 30, d - 8)
+			model.Parent = plate
+			ModelFactory.NameTag(model, ("🔓 RESCUE %s %s  (+%dx)"):format(brainrot.icon, string.upper(brainrot.name), brainrot.bonus), color, 12)
+			coinLine(ctx, lane, d - 32, d - 8)
+			obstacleRows(ctx, d + 16, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
 		end
-		sideScenery(ctx, PALETTES.City, 30, 80)
-		-- Gentle obstacles and a coin shower so the player can enjoy the view.
-		for _, lane in LANE_IDS do
-			coinLine(ctx, lane, EDGE, ctx.length * 0.3)
-		end
-		obstacleRows(ctx, ctx.length * 0.68, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
-	end,
-})
-
--- 🌿 Farm road: hay bales, fences and the odd tractor.
-define({
-	name = "Meadow",
-	cooldown = 0,
-	build = function(ctx)
-		road(ctx)
-		sideScenery(ctx)
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { Barricade = 4, Crates = 3, OverheadSign = 1, Car = 1, WoodWall = 1 })
-		maybeEquipmentPickup(ctx, 0.25)
-	end,
-})
-
--- ❄️ A long slippery slide: fewer obstacles, zig-zag coin trail to chase.
-define({
-	name = "IceSlide",
-	cooldown = 1,
-	build = function(ctx)
-		road(ctx)
-		sideScenery(ctx)
-		local zigzag = { -1, 0, 1, 0 }
-		for d = EDGE, ctx.length - EDGE, 5 do
-			coin(ctx, zigzag[(d // 25) % 4 + 1], 0, d)
-		end
-		obstacleRows(ctx, EDGE + 30, ctx.length - EDGE, { SteelBarrier = 2, Barricade = 2, Crates = 1 })
-		-- A snowman for good measure
-		local side = if ctx.rng:NextNumber() < 0.5 then -1 else 1
-		for i, size in { 6, 4.5, 3 } do
-			scenery(ctx, { Name = "Snowman", Shape = Enum.PartType.Ball, Size = Vector3.one * size, CFrame = CF(ctx, side * 21, ({ 3, 7.5, 11 })[i], ctx.length / 2), Color = Color3.fromRGB(250, 252, 255), Material = Enum.Material.Snow })
-		end
-	end,
-})
-
--- 🌋 Lava pools across the lanes: jump, jump, jump.
-define({
-	name = "LavaRiver",
-	cooldown = 1,
-	build = function(ctx)
-		road(ctx)
-		sideScenery(ctx)
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { LavaPool = 6, Barricade = 1, WoodWall = 1, SteelBarrier = 1 })
-		maybeEquipmentPickup(ctx, 0.3)
-	end,
-})
-
--- Placed automatically when you cross into a new biome: a big gate, a coin
--- shower and no obstacles, so the new zone gets a moment to show off.
-define({
-	name = "BiomeGate",
-	cooldown = 0,
-	build = function(ctx)
-		road(ctx)
-		sideScenery(ctx)
-		local biome = ctx.biome
-		for _, sx in { -16, 16 } do
-			scenery(ctx, { Name = "GatePillar", Size = Vector3.new(4, 26, 4), CFrame = CF(ctx, sx, 13, 30), Color = biome.coinColor, Material = Enum.Material.Neon })
-		end
-		local arch = scenery(ctx, { Name = "GateArch", Size = Vector3.new(36, 7, 3), CFrame = CF(ctx, 0, 27, 30), Color = biome.ground.color, Material = biome.ground.material })
-		Util.SurfaceLabel(arch, Enum.NormalId.Back, ("%s %s"):format(biome.icon, string.upper(biome.name)), { PixelsPerStud = 12, TextColor = biome.coinColor })
-		for _, lane in LANE_IDS do
-			coinLine(ctx, lane, 40, ctx.length - EDGE)
-		end
-		ctx.folder:SetAttribute("BiomeGate", biome.id)
 	end,
 })
 
 Segments.Definitions = defs
 
--- The calm section right after the run gate: no obstacles, a tunnel mouth
--- behind the player (where Sahur appears) and a big "GET READY" banner.
+-- The start: a clear stretch in front of Verity's factory gate, which the
+-- villain bursts out of during the intro.
 function Segments.BuildStartArea(ctx: Ctx)
-	road(ctx)
-	-- Extend the road behind the start line for the tunnel mouth.
-	ground(ctx, { Name = "RoadBehind", Size = Vector3.new(ROAD_WIDTH, 2, 60), CFrame = CF(ctx, 0, -1, -30), Color = ctx.biome.road.color, Material = ctx.biome.road.material })
-	sideScenery(ctx)
+	yardFloor(ctx)
+	yardScenery(ctx)
+	ground(ctx, { Name = "GroundBehind", Size = Vector3.new(ROAD_WIDTH, 2, 60), CFrame = CF(ctx, 0, -1, -30), Color = THEME.Ground, Material = Enum.Material.Slate })
 
-	-- The tunnel the player just came out of
+	-- Factory gate behind the player
 	for _, side in { -1, 1 } do
-		scenery(ctx, { Name = "GateWall", Size = Vector3.new(3, 24, 30), CFrame = CF(ctx, side * 15.5, 12, -22), Color = Color3.fromRGB(40, 35, 60), Material = Enum.Material.Concrete })
+		scenery(ctx, { Name = "GateWall", Size = Vector3.new(4, 26, 30), CFrame = CF(ctx, side * 16, 13, -22), Color = THEME.Silhouette, Material = Enum.Material.DiamondPlate })
 	end
-	scenery(ctx, { Name = "GateRoof", Size = Vector3.new(34, 3, 30), CFrame = CF(ctx, 0, 25.5, -22), Color = Color3.fromRGB(40, 35, 60) })
-	local arch = scenery(ctx, { Name = "GateArch", Size = Vector3.new(36, 5, 3), CFrame = CF(ctx, 0, 26, -7), Color = Color3.fromRGB(255, 70, 160), Material = Enum.Material.Neon })
-	Util.SurfaceLabel(arch, Enum.NormalId.Back, "🏃 RUN GATE", { PixelsPerStud = 12 })
-	scenery(ctx, { Name = "TunnelDark", Size = Vector3.new(28, 22, 1), CFrame = CF(ctx, 0, 11, -36), Color = Color3.fromRGB(5, 5, 10), CanCollide = false })
+	scenery(ctx, { Name = "GateRoof", Size = Vector3.new(36, 4, 30), CFrame = CF(ctx, 0, 27, -22), Color = THEME.Silhouette })
+	local arch = scenery(ctx, { Name = "GateArch", Size = Vector3.new(36, 5, 3), CFrame = CF(ctx, 0, 27, -7), Color = THEME.Evil, Material = Enum.Material.Neon })
+	Util.SurfaceLabel(arch, Enum.NormalId.Back, ("☣️ %s INDUSTRIES"):format(Config.Villain.Title), { PixelsPerStud = 12 })
+	scenery(ctx, { Name = "GateDark", Size = Vector3.new(28, 22, 1), CFrame = CF(ctx, 0, 11, -36), Color = Color3.fromRGB(5, 5, 10), CanCollide = false })
 
-	-- Banner over the start line
-	local banner = scenery(ctx, { Name = "StartBanner", Size = Vector3.new(30, 5, 0.5), CFrame = CF(ctx, 0, 19, 30), Color = Color3.fromRGB(30, 25, 50) })
-	Util.SurfaceLabel(banner, Enum.NormalId.Back, "GET READY… 🪵 HE'S COMING", { PixelsPerStud = 12, TextColor = Color3.fromRGB(255, 220, 90) })
+	local banner = scenery(ctx, { Name = "StartBanner", Size = Vector3.new(30, 5, 0.5), CFrame = CF(ctx, 0, 19, 32), Color = Color3.fromRGB(20, 15, 30) })
+	Util.SurfaceLabel(banner, Enum.NormalId.Back, ("RUN! %s IS COMING"):format(Config.Villain.Title), { PixelsPerStud = 12, TextColor = THEME.Toxic })
 	for _, side in { -1, 1 } do
-		scenery(ctx, { Name = "BannerPost", Size = Vector3.new(1, 21, 1), CFrame = CF(ctx, side * 15, 10.5, 30), Color = Color3.fromRGB(60, 60, 70) })
+		scenery(ctx, { Name = "BannerPost", Size = Vector3.new(1, 21, 1), CFrame = CF(ctx, side * 15, 10.5, 32), Color = Color3.fromRGB(45, 45, 55) })
 	end
-	-- The head start cannon, right behind the player.
-	local cannon = Instance.new("Model")
-	cannon.Name = "HeadStartCannon"
-	cannon.Parent = ctx.folder
-	scenery(ctx, { Parent = cannon, Name = "CannonBase", Size = Vector3.new(6, 3, 7), CFrame = CF(ctx, 0, 1.5, -4), Color = Color3.fromRGB(120, 80, 45), Material = Enum.Material.WoodPlanks, Studs = true, CanCollide = false })
-	for _, side in { -1, 1 } do
-		scenery(ctx, { Parent = cannon, Name = "Wheel", Shape = Enum.PartType.Cylinder, Size = Vector3.new(1, 5, 5), CFrame = CF(ctx, side * 3.5, 2.5, -4), Color = Color3.fromRGB(70, 50, 30), CanCollide = false })
-	end
-	local barrel = scenery(ctx, {
-		Parent = cannon,
-		Name = "Barrel",
-		Shape = Enum.PartType.Cylinder,
-		Size = Vector3.new(9, 3.4, 3.4),
-		CFrame = CF(ctx, 0, 5, -3) * CFrame.Angles(math.rad(28), 0, 0) * CFrame.Angles(0, math.rad(90), 0),
-		Color = Color3.fromRGB(45, 45, 55),
-		Material = Enum.Material.Metal,
-		CanCollide = false,
-	})
-	local muzzle = scenery(ctx, { Parent = cannon, Name = "Muzzle", Size = Vector3.new(0.5, 0.5, 0.5), CFrame = barrel.CFrame * CFrame.new(4.6, 0, 0), Transparency = 1, CanCollide = false })
-	Util.Billboard(muzzle, "🎯 HEAD START CANNON", UDim2.fromOffset(240, 40), Vector3.new(0, 4, 0), Color3.fromRGB(255, 220, 90))
-
-	-- A few warm-up coins down the middle.
 	coinLine(ctx, 0, 40, ctx.length - 8)
 end
 
