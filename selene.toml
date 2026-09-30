@@ -1,0 +1,5 @@
+std = "roblox_min"
+
+[lints]
+# Rojo's `script.Parent` requires aren't resolvable statically.
+unused_variable = "warn"
