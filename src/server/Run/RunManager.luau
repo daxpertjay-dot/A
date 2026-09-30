@@ -55,7 +55,9 @@ type Run = {
 	doublerUntil: number,
 	revives: number,
 	crates: { [string]: number },
-	discovered: { string },
+	caughtBrainrots: { string },
+	perks: { [string]: number }, -- run buddy perk totals
+	buddy: string,
 	caughtClock: number,
 	survival: number,
 	ended: boolean,
@@ -96,7 +98,7 @@ end
 
 -- ───────────────────────────── start ─────────────────────────────
 
-local function buildLoadout(player: Player): { LoadoutEntry }
+local function buildLoadout(player: Player, extraCharges: number): { LoadoutEntry }
 	local profile = PlayerData.Get(player)
 	local loadout = {}
 	if not profile then
@@ -107,7 +109,7 @@ local function buildLoadout(player: Player): { LoadoutEntry }
 		local item = EquipmentData.Get(itemId)
 		if item and (profile.Inventory[item.id] or 0) > 0 then
 			local level = EquipmentData.LevelFromCount(profile.Inventory[item.id])
-			table.insert(loadout, { slot = slot, itemId = item.id, level = level, charges = EquipmentData.ChargesAt(item, level) })
+			table.insert(loadout, { slot = slot, itemId = item.id, level = level, charges = EquipmentData.ChargesAt(item, level) + extraCharges })
 		end
 	end
 	return loadout
@@ -146,6 +148,7 @@ function RunManager.StartRun(player: Player)
 		return
 	end
 
+	local perks = BrainrotData.PerkTotals(profile.Buddy)
 	local slot = allocateSlot()
 	local origin = Vector3.new(Config.Run.WorldOriginX + slot * Config.Run.SlotSpacing, Config.Run.WorldY, 0)
 	local folder = Instance.new("Folder")
@@ -163,7 +166,7 @@ function RunManager.StartRun(player: Player)
 		goClock = math.huge,
 		d = START_D,
 		coins = 0,
-		loadout = buildLoadout(player),
+		loadout = buildLoadout(player, perks.ExtraCharges or 0),
 		shieldUntil = 0,
 		boostUntil = 0,
 		boostMultiplier = 1,
@@ -172,13 +175,16 @@ function RunManager.StartRun(player: Player)
 		doublerUntil = 0,
 		revives = 0,
 		crates = {},
-		discovered = {},
+		caughtBrainrots = {},
+		perks = perks,
+		buddy = profile.Buddy,
 		caughtClock = 0,
 		survival = 0,
 		ended = false,
 		connections = {},
 	}
 	runs[player] = run
+	player:SetAttribute("InRun", true)
 
 	-- 1) "RUN STARTING..." fade on the client while the world is built.
 	Remotes.Event("RunStarting"):FireClient(player)
@@ -205,16 +211,13 @@ function RunManager.StartRun(player: Player)
 		-- group when its run controller takes over (it simulates the character).
 		currentCharacter:PivotTo(startCf)
 
-		-- The first run introduces Tung Tung Tung Sahur to the collection.
-		if not profile.Collection[BrainrotData.ChaserId] then
-			profile.Collection[BrainrotData.ChaserId] = true
-			table.insert(run.discovered, BrainrotData.ChaserId)
-			PlayerData.Changed(player)
-		end
-
 		run.phase = "Intro"
 		local leadIn = Config.Run.IntroDuration + Config.Run.CountdownStep * 3 + 0.25
 		run.goClock = os.clock() + leadIn
+		-- Buddy perk: start shielded.
+		if perks.StartShield then
+			run.shieldUntil = run.goClock + perks.StartShield
+		end
 		Remotes.Event("RunPrepare"):FireClient(player, {
 			origin = origin,
 			startD = START_D,
@@ -223,6 +226,8 @@ function RunManager.StartRun(player: Player)
 			bestDistance = profile.Stats.BestDistance,
 			goServerTime = workspace:GetServerTimeNow() + leadIn,
 			trackFolder = run.track.folder,
+			buddy = run.buddy,
+			perks = perks,
 		})
 		task.delay(leadIn, function()
 			if runs[player] == run and run.phase == "Intro" then
@@ -310,7 +315,7 @@ local function onReportHit(player: Player, object: any, info: any)
 		return
 	end
 
-	local result = ImpactRules.Resolve(tier, collisionDamage, speed, boost, shield)
+	local result = ImpactRules.Resolve(tier, collisionDamage, speed, boost, shield, run.perks.CrashThrough)
 	if result.outcome == "Absorbed" then
 		run.shieldUntil = 0
 		Remotes.Event("RunWorld"):FireClient(player, { type = "ShieldUsed" })
@@ -329,12 +334,13 @@ local function onCollectCoin(player: Player, coin: any)
 		return
 	end
 	local now = os.clock()
-	local tolerance = Config.Run.PickupTolerance + (if now < run.magnetUntil + 0.5 then run.magnetRadius else 0)
+	local magnet = math.max(run.perks.Magnet or 0, if now < run.magnetUntil + 0.5 then run.magnetRadius else 0)
+	local tolerance = Config.Run.PickupTolerance + magnet
 	if not nearRunner(run, part.Position, tolerance) then
 		return
 	end
 	part:Destroy()
-	local value = Config.Economy.CoinValue * (if now < run.doublerUntil then 2 else 1)
+	local value = Config.Economy.CoinValue * (if now < run.doublerUntil then 2 else 1) * (1 + (run.perks.CoinBonus or 0))
 	run.coins += value
 end
 
@@ -348,10 +354,18 @@ local function onPickupItem(player: Player, pickupPart: any)
 	if not part:IsA("BasePart") or not kind or not nearRunner(run, part.Position, Config.Run.PickupTolerance) then
 		return
 	end
+	local brainrotId = part:GetAttribute("BrainrotId")
+	local crateId = part:GetAttribute("CrateId") or "Common"
 	part:Destroy()
 
-	if kind == "Crate" then
-		local crateId = part:GetAttribute("CrateId") or "Common"
+	if kind == "Brainrot" then
+		local id = brainrotId
+		local data = if type(id) == "string" then BrainrotData.Get(id) else nil
+		if data then
+			table.insert(run.caughtBrainrots, data.id)
+			Remotes.Event("RunWorld"):FireClient(player, { type = "BrainrotCaught", id = data.id, name = data.name, icon = data.icon, rarity = data.rarity })
+		end
+	elseif kind == "Crate" then
 		run.crates[crateId] = (run.crates[crateId] or 0) + 1
 		Remotes.Event("RunWorld"):FireClient(player, { type = "CrateFound", crateId = crateId })
 	elseif #run.loadout > 0 then
@@ -359,7 +373,7 @@ local function onPickupItem(player: Player, pickupPart: any)
 		entry.charges += 1
 		Remotes.Event("RunWorld"):FireClient(player, { type = "Charges", slot = entry.slot, charges = entry.charges, gained = true })
 	else
-		run.coins += 25
+		run.coins += 25 * (1 + (run.perks.CoinBonus or 0))
 		Remotes.Event("RunWorld"):FireClient(player, { type = "BonusCoins", amount = 25 })
 	end
 end
@@ -408,29 +422,6 @@ local function onUseEquipment(player: Player, slot: any)
 		event.destroyed = destroyed
 	end
 	Remotes.Event("RunWorld"):FireClient(player, event)
-end
-
-local function onEncounter(player: Player, brainrotId: any)
-	local run = runs[player]
-	if not run or type(brainrotId) ~= "string" or not BrainrotData.Get(brainrotId) then
-		return
-	end
-	local found = false
-	for _, d in run.track.folder:GetDescendants() do
-		if d:GetAttribute("Encounter") == brainrotId and math.abs((d:GetAttribute("EncounterD") or 0) - run.d) < 120 then
-			found = true
-			break
-		end
-	end
-	local profile = PlayerData.Get(player)
-	if not found or not profile or profile.Collection[brainrotId] then
-		return
-	end
-	profile.Collection[brainrotId] = true
-	table.insert(run.discovered, brainrotId)
-	PlayerData.Changed(player)
-	local data = BrainrotData.Get(brainrotId) :: BrainrotData.Brainrot
-	notify(player, ("🧠 NEW BRAINROT: %s %s!"):format(data.icon, data.name), Color3.fromRGB(255, 120, 220))
 end
 
 -- ───────────────────────────── caught / revive / end ─────────────────────────────
@@ -513,6 +504,7 @@ function RunManager.ReturnToLobby(player: Player)
 		runs[player] = nil
 		cleanup(run)
 	end
+	player:SetAttribute("InRun", false)
 	if player.Parent then
 		player:LoadCharacter()
 		Remotes.Event("ReturnedToLobby"):FireClient(player)
@@ -530,8 +522,10 @@ function RunManager.EndRun(player: Player, reason: string)
 	local profile = PlayerData.Get(player)
 	local meters = math.floor(math.max(0, run.d - START_D) * Config.Run.MetersPerStud)
 	local distanceBonus = math.floor(meters * Config.Economy.DistanceCoinBonus)
-	local total = run.coins + distanceBonus
+	local runCoins = math.floor(run.coins)
+	local total = runCoins + distanceBonus
 	local newBest = false
+	local caught = {}
 
 	if profile then
 		local stats = profile.Stats
@@ -547,6 +541,13 @@ function RunManager.EndRun(player: Player, reason: string)
 		for crateId, count in run.crates do
 			profile.Crates[crateId] = (profile.Crates[crateId] or 0) + count
 		end
+		-- Caught Brainrots go straight to your base (kept even if you're caught).
+		for _, id in run.caughtBrainrots do
+			local data = BrainrotData.Get(id) :: BrainrotData.Brainrot
+			table.insert(caught, { id = id, name = data.name, icon = data.icon, isNew = not profile.Collection[id], income = data.income })
+			profile.Brainrots[id] = (profile.Brainrots[id] or 0) + 1
+			profile.Collection[id] = true
+		end
 		PlayerData.Changed(player)
 		task.spawn(Leaderboards.Submit, player)
 	end
@@ -557,18 +558,10 @@ function RunManager.EndRun(player: Player, reason: string)
 		return
 	end
 
-	local discovered = {}
-	for _, id in run.discovered do
-		local data = BrainrotData.Get(id)
-		if data then
-			table.insert(discovered, { id = id, name = data.name, icon = data.icon })
-		end
-	end
-
 	Remotes.Event("RunEnded"):FireClient(player, {
 		reason = reason,
 		distance = meters,
-		coins = run.coins,
+		coins = runCoins,
 		distanceBonus = distanceBonus,
 		totalCoins = total,
 		newBest = newBest,
@@ -576,7 +569,7 @@ function RunManager.EndRun(player: Player, reason: string)
 		survival = math.floor(run.survival),
 		revives = run.revives,
 		crates = run.crates,
-		discovered = discovered,
+		caught = caught,
 	})
 
 	-- Back to the lobby when the player closes the results (or after 30s).
@@ -600,7 +593,6 @@ function RunManager.Init()
 	Remotes.Event("CollectCoin").OnServerEvent:Connect(onCollectCoin)
 	Remotes.Event("PickupItem").OnServerEvent:Connect(onPickupItem)
 	Remotes.Event("UseEquipment").OnServerEvent:Connect(onUseEquipment)
-	Remotes.Event("EncounterBrainrot").OnServerEvent:Connect(onEncounter)
 	Remotes.Event("ReportCaught").OnServerEvent:Connect(onReportCaught)
 	Remotes.Event("ChooseRevive").OnServerEvent:Connect(onChooseRevive)
 	Remotes.Event("LeaveResults").OnServerEvent:Connect(function(player)
@@ -620,6 +612,15 @@ function RunManager.Init()
 			local character = hit:FindFirstAncestorOfClass("Model")
 			local player = character and Players:GetPlayerFromCharacter(character)
 			if not player or runs[player] then
+				return
+			end
+			-- Plot portals only work for the plot's owner.
+			local owner = trigger:GetAttribute("OwnerUserId")
+			if owner ~= nil and owner ~= player.UserId then
+				if (debounce[player] or 0) <= os.clock() then
+					debounce[player] = os.clock() + 3
+					Remotes.Event("Notify"):FireClient(player, "That's someone else's run portal — use your own base!", Color3.fromRGB(255, 200, 90))
+				end
 				return
 			end
 			local now = os.clock()

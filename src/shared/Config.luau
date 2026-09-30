@@ -9,20 +9,26 @@ Config.DataStoreName = "BrainrotRunner_PlayerData_v1"
 Config.DataStoreEnabled = true -- falls back to session-only data if DataStores are unavailable (e.g. Studio without API access)
 
 -- ───────────────────────────── LOBBY ─────────────────────────────
+-- Blocky "tycoon street" lobby (Steal a Brainrot / Grow a Garden style):
+-- a central street with shops down the middle, conveyor belts looping around
+-- it, and a row of player plots on each side.
 Config.Lobby = {
 	Origin = Vector3.new(0, 0, 0),
-	SpawnOffset = Vector3.new(0, 4, 0),
-	-- Station positions relative to the lobby origin (matches the layout mockup:
-	-- leaderboard north, crates west, shop east, run entrance south).
-	Leaderboard = Vector3.new(0, 0, -110),
-	Crates = Vector3.new(-100, 0, 0),
-	Shop = Vector3.new(100, 0, 0),
-	RunEntrance = Vector3.new(0, 0, 110),
-	Loadout = Vector3.new(-80, 0, -75),
-	Collection = Vector3.new(80, 0, -75),
-	DailyReward = Vector3.new(-75, 0, 75),
-	Stats = Vector3.new(75, 0, 75),
-	Size = 330,
+	PlotsPerSide = 4,
+	PlotWidth = 64, -- along the street (Z)
+	PlotDepth = 84, -- away from the street (X)
+	PlotGap = 10,
+	StreetHalfWidth = 34, -- plots start this far from the centre line
+	ConveyorSpeed = 30, -- studs/sec
+	ConveyorWidth = 8,
+	UseStuds = true, -- classic stud / inlet surfaces on lobby parts
+}
+
+-- Player bases
+Config.Plot = {
+	Pedestals = 8, -- Brainrots displayed (and earning) on your base
+	OfflineIncomeCap = 2 * 60 * 60, -- seconds of offline earnings kept
+	OfflineIncomeRate = 0.5, -- offline earnings are half speed
 }
 
 -- ───────────────────────────── RUN WORLD ─────────────────────────────
@@ -52,6 +58,7 @@ Config.Run = {
 	FastFallVelocity = -110, -- pressing roll mid-air slams you down (Subway Surfers style)
 	RollDuration = 0.7,
 	RollCooldown = 0.1,
+	JumpBuffer = 0.18, -- a jump pressed this long before landing still fires on landing
 
 	-- Hitboxes (studs)
 	HitboxWidth = 2.6,
@@ -111,14 +118,15 @@ Config.Destruction = {
 
 -- ───────────────────────────── CAMERA ─────────────────────────────
 Config.Camera = {
-	Distance = 16,
-	Height = 7,
-	LookAhead = 14,
-	LookHeight = 2.5,
+	-- Higher and further up, tilted down at the track (Subway Surfers angle).
+	Distance = 15,
+	Height = 12,
+	LookAhead = 12,
+	LookHeight = -1.5,
 	LaneFollowSharpness = 12,
 	VerticalFollow = 0.4, -- how much of a jump the camera follows
 	VerticalSharpness = 6,
-	FOV = { Normal = 72, Fast = 76, VeryFast = 80 },
+	FOV = { Normal = 86, Fast = 91, VeryFast = 96 },
 	FastSpeed = 55,
 	VeryFastSpeed = 68,
 	FOVSharpness = 3,
@@ -131,6 +139,30 @@ Config.Economy = {
 	MaxRevivesPerRun = 3,
 	DistanceCoinBonus = 0.05, -- coins awarded per meter at the end of a run
 	CoinValue = 1,
+}
+
+-- ───────────────────────────── ANIMATIONS ─────────────────────────────
+-- Run-time animations (R15). Any animation owned by Roblox or by you works.
+-- Handy Roblox animation-pack IDs to try:
+--   Ninja      run 656118852   jump 656117878
+--   Cartoony   run 742638842   jump 742637942
+--   Superhero  run 616117076   jump 616115533
+--   Stylish    run 616140816   jump 616139451
+--   Toy        run 782842708   jump 782847020
+--   Robot      run 616091570   jump 616090535
+--   Rthro      run 2510198475  jump 2510197830
+Config.Animations = {
+	R15 = {
+		Run = "rbxassetid://656118852", -- Ninja sprint
+		Jump = "rbxassetid://742637942", -- Cartoony jump
+		Idle = "rbxassetid://507766388",
+	},
+	R6 = {
+		Run = "rbxassetid://180426354",
+		Jump = "rbxassetid://125750702",
+		Idle = "rbxassetid://180435571",
+	},
+	RunSpeedDivisor = 34, -- playback speed = run speed / this
 }
 
 -- Loadout slots unlock through progression (total runs)

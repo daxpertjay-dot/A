@@ -23,7 +23,6 @@ local C = UIKit.Colors
 local gui: ScreenGui
 local hud: Frame
 local coinsLabel: TextLabel
-local cratesLabel: TextLabel
 local toastHolder: Frame
 local data: any = nil
 
@@ -124,15 +123,23 @@ local function oddsText(crate: CrateData.Crate): string
 	return table.concat(parts, " · ")
 end
 
-local function revealCrate(content: Frame, res: any)
-	revealing = true
-	local overlay = UIKit.New("Frame", { BackgroundColor3 = C.Panel, Size = UDim2.fromScale(1, 1), ZIndex = 10, Parent = content })
-	UIKit.Corner(12).Parent = overlay
-	local reel = UIKit.Label({ Text = "📦", Size = UDim2.fromScale(1, 0.45), Position = UDim2.fromScale(0, 0.1), ZIndex = 11, Parent = overlay })
-	local nameLabel = UIKit.Label({ Text = "OPENING…", Size = UDim2.new(1, 0, 0, 44), Position = UDim2.fromScale(0, 0.58), ZIndex = 11, Parent = overlay })
-	local detail = UIKit.Label({ Text = "", Size = UDim2.new(1, 0, 0, 28), Position = UDim2.fromScale(0, 0.7), TextColor3 = C.Muted, ZIndex = 11, Parent = overlay })
+local revealLayer: Frame
 
-	-- Slot-machine style reel that slows down before the reveal.
+-- Crate reveal: a full-screen slot-machine reel that plays wherever you are.
+function LobbyUI.Reveal(res: any)
+	if revealing or type(res) ~= "table" or not res.itemId then
+		return
+	end
+	revealing = true
+	local overlay = UIKit.New("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, Size = UDim2.fromScale(1, 1), Parent = revealLayer })
+	local card = UIKit.Card({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(420, 360), BackgroundColor3 = C.Panel, Parent = overlay })
+	local crate = CrateData.Get(res.crateId or "")
+	UIKit.Label({ Text = if crate then "📦 " .. crate.name else "📦 CRATE", TextColor3 = if crate then crate.color else C.Gold, Size = UDim2.new(1, 0, 0, 36), Position = UDim2.fromOffset(0, 10), Parent = card })
+	local reel = UIKit.Label({ Text = "📦", Size = UDim2.new(1, 0, 0, 130), Position = UDim2.fromOffset(0, 54), Parent = card })
+	local nameLabel = UIKit.Label({ Text = "OPENING…", Size = UDim2.new(1, -20, 0, 40), Position = UDim2.fromOffset(10, 196), Parent = card })
+	local detail = UIKit.Label({ Text = "", Size = UDim2.new(1, -20, 0, 26), Position = UDim2.fromOffset(10, 240), TextColor3 = C.Muted, Parent = card })
+
+	-- Reel slows down before the reveal.
 	local delay = 0.05
 	while delay < 0.28 do
 		local item = EquipmentData.Items[math.random(1, #EquipmentData.Items)]
@@ -144,24 +151,39 @@ local function revealCrate(content: Frame, res: any)
 
 	local item = EquipmentData.Get(res.itemId) :: EquipmentData.Item
 	reel.Text = item.icon
+	reel.TextColor3 = EquipmentData.RarityColors[item.rarity]
 	UIKit.Pop(reel)
 	nameLabel.Text = ("%s%s"):format(if res.isNew then "✨ NEW! " else "", item.name)
 	nameLabel.TextColor3 = EquipmentData.RarityColors[item.rarity]
-	detail.Text = ("%s · %s · Level %d%s"):format(
+	detail.Text = ("%s · %s %s · Level %d%s"):format(
 		string.upper(item.rarity),
-		EquipmentData.AbilityIcons[item.ability] .. " " .. item.ability,
-		res.level,
-		if res.isNew then "" else " (duplicate → level up!)"
+		EquipmentData.AbilityIcons[item.ability],
+		item.ability,
+		res.level or 1,
+		if res.isNew then " (auto-equipped if a slot was free)" else " — duplicate levels it up!"
 	)
-	local nice = UIKit.Button({ Text = "NICE!", Size = UDim2.fromOffset(180, 50), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0.82), BackgroundColor3 = C.Good, ZIndex = 11 }, function()
+	UIKit.Button({ Text = "NICE!", Size = UDim2.fromOffset(180, 50), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 290), BackgroundColor3 = C.Good }, function()
 		overlay:Destroy()
 		revealing = false
 		refreshOpen()
-	end)
-	nice.Parent = overlay
+	end).Parent = card
 end
 
 local busy = false
+local function crateAction(fn: () -> any)
+	if busy or revealing then
+		return
+	end
+	busy = true
+	local res = fn()
+	busy = false
+	if type(res) == "table" and res.ok and res.itemId then
+		task.spawn(LobbyUI.Reveal, res)
+	else
+		result(res)
+	end
+end
+
 local function buildCrates(content: Frame, highlight: string?)
 	local row = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = content })
 	UIKit.List(Enum.FillDirection.Horizontal, 14).Parent = row
@@ -173,41 +195,29 @@ local function buildCrates(content: Frame, highlight: string?)
 		end
 		UIKit.List(nil, 6).Parent = card
 		UIKit.Padding(10).Parent = card
-		UIKit.Label({ Text = "📦", Size = UDim2.new(1, 0, 0.28, 0), Parent = card })
+		UIKit.Label({ Text = "📦", Size = UDim2.new(1, 0, 0.24, 0), Parent = card })
 		UIKit.Label({ Text = crate.name, TextColor3 = crate.color, Size = UDim2.new(1, 0, 0, 30), Parent = card })
-		UIKit.Label({ Text = ("You own: %d"):format(owned), Size = UDim2.new(1, 0, 0, 24), Parent = card })
 		UIKit.Label({ Text = oddsText(crate), TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 18), Parent = card })
 
-		UIKit.Button({ Text = "OPEN", Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = if owned > 0 then C.Good else C.PanelLight }, function()
-			if busy then
-				return
-			end
-			if owned <= 0 then
-				LobbyUI.Toast("Buy a crate first!", C.Bad)
-				return
-			end
-			busy = true
-			local res = Remotes.Function("OpenCrate"):InvokeServer(crate.id)
-			if res and res.ok then
-				revealCrate(content, res)
-			else
-				result(res)
-			end
-			busy = false
-		end).Parent = card
-
-		UIKit.Button({ Text = ("BUY 🪙 %s"):format(Util.FormatNumber(crate.coinPrice)), Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.Gold, TextColor3 = Color3.new(0, 0, 0) }, function()
-			result(Remotes.Function("BuyCrate"):InvokeServer(crate.id, "Coins"))
+		-- Buying opens it right here.
+		UIKit.Button({ Text = ("BUY & OPEN  🪙 %s"):format(Util.FormatNumber(crate.coinPrice)), Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.Gold, TextColor3 = Color3.new(0, 0, 0) }, function()
+			crateAction(function()
+				return Remotes.Function("BuyCrate"):InvokeServer(crate.id, "Coins")
+			end)
 		end).Parent = card
 
 		if crate.robuxLabel then
 			local configured = crate.productKey and (Config.DeveloperProducts :: any)[crate.productKey] ~= 0
-			UIKit.Button({
-				Text = ("BUY %s"):format(crate.robuxLabel),
-				Size = UDim2.new(1, 0, 0, 40),
-				BackgroundColor3 = if configured then C.Good else C.PanelLight,
-			}, function()
+			UIKit.Button({ Text = ("BUY & OPEN  %s"):format(crate.robuxLabel), Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = if configured then C.Good else C.PanelLight }, function()
 				result(Remotes.Function("BuyCrate"):InvokeServer(crate.id, "Robux"))
+			end).Parent = card
+		end
+
+		if owned > 0 then
+			UIKit.Button({ Text = ("OPEN FREE (%d)"):format(owned), Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.Accent }, function()
+				crateAction(function()
+					return Remotes.Function("OpenCrate"):InvokeServer(crate.id)
+				end)
 			end).Parent = card
 		end
 	end
@@ -311,30 +321,60 @@ end
 
 -- ───────────────────────────── collection ─────────────────────────────
 
-local function buildCollection(content: Frame)
+-- Brainrots: what you own, what they earn on your base, and which one is
+-- your run buddy.
+local function buildBrainrots(content: Frame)
+	local owned = if data then data.Brainrots else {}
 	local found = 0
 	for _, b in BrainrotData.List do
-		if data and data.Collection[b.id] then
+		if (owned[b.id] or 0) > 0 then
 			found += 1
 		end
 	end
-	UIKit.Label({ Text = ("🧠 %d / %d DISCOVERED"):format(found, #BrainrotData.List), TextColor3 = C.Gold, Size = UDim2.new(1, 0, 0, 30), Parent = content })
-	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -40), Position = UDim2.fromOffset(0, 40) })
-	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(150, 175), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+	UIKit.Label({
+		Text = ("🧠 %d / %d owned   ·   💰 base income +%s/s   ·   🤝 buddy: %s"):format(
+			found,
+			#BrainrotData.List,
+			Util.FormatNumber(if data then data.IncomePerSecond else 0),
+			if data and BrainrotData.Get(data.Buddy) then (BrainrotData.Get(data.Buddy) :: any).name else "none"
+		),
+		TextColor3 = C.Gold,
+		Size = UDim2.new(1, 0, 0, 28),
+		Parent = content,
+	})
+	UIKit.Label({ Text = ("Your best %d Brainrots stand on your base and earn coins. Catch more in runs!"):format(Config.Plot.Pedestals), TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 30), Parent = content })
+	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -56), Position = UDim2.fromOffset(0, 56) })
+	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(170, 220), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
 	for i, b in BrainrotData.List do
-		local unlocked = data and data.Collection[b.id]
+		local count = owned[b.id] or 0
+		local have = count > 0
+		local isBuddy = data and data.Buddy == b.id
+		local rarityColor = BrainrotData.RarityColors[b.rarity] or C.Gold
 		local card = UIKit.Card({ LayoutOrder = i, Parent = grid })
-		UIKit.Label({ Text = if unlocked then b.icon else "❓", Size = UDim2.new(1, 0, 0.4, 0), Parent = card })
-		UIKit.Label({ Text = if unlocked then b.name else "???", Size = UDim2.new(1, -8, 0, 22), Position = UDim2.new(0, 4, 0.42, 0), Parent = card })
-		UIKit.Label({ Text = if unlocked then string.upper(b.rarity) else "LOCKED", Size = UDim2.new(1, 0, 0, 18), Position = UDim2.new(0, 0, 0.58, 0), TextColor3 = if unlocked then C.Gold else C.Bad, Parent = card })
-		UIKit.Label({
-			Text = if unlocked then b.description else ("Spotted after %dm"):format(b.minDistance),
-			Size = UDim2.new(1, -10, 0, 44),
-			Position = UDim2.new(0, 5, 0.7, 0),
-			TextColor3 = C.Muted,
-			TextWrapped = true,
-			Parent = card,
-		})
+		if isBuddy then
+			UIKit.Stroke(4, C.Gold).Parent = card
+		end
+		UIKit.Label({ Text = if have then b.icon else "❓", Size = UDim2.new(1, 0, 0, 56), Position = UDim2.fromOffset(0, 6), Parent = card })
+		UIKit.Label({ Text = if have then ("%s  x%d"):format(b.name, count) else "???", Size = UDim2.new(1, -8, 0, 22), Position = UDim2.fromOffset(4, 64), Parent = card })
+		UIKit.Label({ Text = string.upper(b.rarity), Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 88), TextColor3 = rarityColor, Parent = card })
+		UIKit.Label({ Text = ("💰 +%s/s each"):format(Util.FormatNumber(b.income)), Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 108), TextColor3 = C.Good, Parent = card })
+		UIKit.Label({ Text = "🤝 " .. b.perkText, Size = UDim2.new(1, -10, 0, 34), Position = UDim2.fromOffset(5, 130), TextColor3 = C.Accent2, TextWrapped = true, Parent = card })
+		if isBuddy then
+			UIKit.Label({ Text = "✅ RUN BUDDY", Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 176), TextColor3 = C.Gold, Parent = card })
+		elseif have then
+			UIKit.Button({ Text = "SET AS BUDDY", Size = UDim2.new(1, -16, 0, 34), Position = UDim2.fromOffset(8, 176), BackgroundColor3 = C.Accent }, function()
+				result(Remotes.Function("SetBuddy"):InvokeServer(b.id), ("🤝 %s will run with you!"):format(b.name))
+			end).Parent = card
+		else
+			UIKit.Label({
+				Text = if b.catchWeight > 0 then ("Catch it in runs after %dm"):format(b.minDistance) else "???",
+				Size = UDim2.new(1, -10, 0, 30),
+				Position = UDim2.fromOffset(5, 176),
+				TextColor3 = C.Muted,
+				TextWrapped = true,
+				Parent = card,
+			})
+		end
 	end
 end
 
@@ -423,8 +463,10 @@ local function buildStats(content: Frame)
 	local stats = if data then data.Stats else {}
 	local found = 0
 	if data then
-		for _ in data.Collection do
-			found += 1
+		for _, count in data.Brainrots do
+			if count > 0 then
+				found += 1
+			end
 		end
 	end
 	local rows = {
@@ -434,7 +476,8 @@ local function buildStats(content: Frame)
 		{ "⏱️ Longest Survival", Util.FormatNumber(stats.LongestSurvival or 0) .. "s" },
 		{ "🪙 Coins Earned", Util.FormatNumber(stats.TotalCoins or 0) },
 		{ "⚡ Equipment Collected", Util.FormatNumber(stats.EquipmentCollected or 0) },
-		{ "🧠 Brainrots Discovered", ("%d / %d"):format(found, #BrainrotData.List) },
+		{ "🧠 Brainrots Owned", ("%d / %d"):format(found, #BrainrotData.List) },
+		{ "💰 Base Income", "+" .. Util.FormatNumber(if data then data.IncomePerSecond else 0) .. "/s" },
 	}
 	local list = UIKit.Scroller(content)
 	UIKit.List(nil, 8).Parent = list
@@ -447,17 +490,22 @@ end
 
 -- ───────────────────────────── HUD / init ─────────────────────────────
 
+local incomeLabel: TextLabel
+local crateBadge: TextLabel
+
 function LobbyUI.SetData(snapshot: any)
 	if not snapshot then
 		return
 	end
 	data = snapshot
 	coinsLabel.Text = "🪙 " .. Util.FormatNumber(snapshot.Coins)
+	incomeLabel.Text = ("💰 +%s/s on your base"):format(Util.FormatNumber(snapshot.IncomePerSecond or 0))
 	local crates = 0
 	for _, n in snapshot.Crates do
 		crates += n
 	end
-	cratesLabel.Text = ("📦 %d crate%s"):format(crates, if crates == 1 then "" else "s")
+	crateBadge.Text = tostring(crates)
+	crateBadge.Visible = crates > 0
 	refreshOpen()
 end
 
@@ -472,19 +520,52 @@ function LobbyUI.Init(playerGui: PlayerGui)
 	gui = UIKit.New("ScreenGui", { Name = "LobbyUI", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui })
 
 	hud = UIKit.New("Frame", { Name = "HUD", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = gui })
-	local wallet = UIKit.New("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.15, Position = UDim2.fromOffset(16, 60), Size = UDim2.fromOffset(230, 92), Parent = hud })
+
+	-- Wallet (top left)
+	local wallet = UIKit.New("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.15, Position = UDim2.fromOffset(16, 60), Size = UDim2.fromOffset(250, 84), Parent = hud })
 	UIKit.Corner(14).Parent = wallet
 	UIKit.Stroke(3, C.Gold).Parent = wallet
 	UIKit.Padding(8).Parent = wallet
 	UIKit.List(nil, 4, Enum.HorizontalAlignment.Left).Parent = wallet
 	coinsLabel = UIKit.Label({ Text = "🪙 …", Size = UDim2.new(1, 0, 0, 36), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gold, Parent = wallet })
-	cratesLabel = UIKit.Label({ Text = "📦 …", Size = UDim2.new(1, 0, 0, 28), TextXAlignment = Enum.TextXAlignment.Left, Parent = wallet })
+	incomeLabel = UIKit.Label({ Text = "💰 …", Size = UDim2.new(1, 0, 0, 22), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Good, Parent = wallet })
+
+	-- Big simulator-style buttons down the left side: everything opens from anywhere.
+	local bar = UIKit.New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.55, 0), Size = UDim2.fromOffset(170, 470), Parent = hud })
+	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(80, 80), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = bar })
+	local buttons = {
+		{ "📦\nCRATES", "Crates", C.Accent2 },
+		{ "⚙️\nGEAR", "Loadout", Color3.fromRGB(120, 120, 160) },
+		{ "🧠\nBRAINROTS", "Brainrots", C.Accent },
+		{ "🛒\nSHOP", "Shop", C.Good },
+		{ "🎁\nDAILY", "Daily", C.Bad },
+		{ "🏆\nTOP", "Leaderboard", C.Gold },
+		{ "📊\nSTATS", "Stats", Color3.fromRGB(90, 160, 255) },
+		{ "🏠\nMY BASE", "", Color3.fromRGB(255, 150, 60) },
+	}
+	for i, def in buttons do
+		local button = UIKit.Button({ Text = def[1], LayoutOrder = i, BackgroundColor3 = def[3], Size = UDim2.fromOffset(80, 80) }, function()
+			if def[2] == "" then
+				close()
+				Remotes.Event("GoToBase"):FireServer()
+			elseif openName == def[2] then
+				close()
+			else
+				LobbyUI.Open(def[2])
+			end
+		end)
+		button.Parent = bar
+		if def[2] == "Crates" then
+			crateBadge = UIKit.Label({ Text = "0", Visible = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(1, -4, 0, 4), Size = UDim2.fromOffset(28, 28), BackgroundTransparency = 0, BackgroundColor3 = C.Bad, ZIndex = 3, Parent = button })
+			UIKit.Corner(14).Parent = crateBadge
+		end
+	end
 
 	UIKit.Label({
-		Text = "🏃 Walk into the <b>RUN GATE</b> to play  ·  Press <b>E</b> at stations",
+		Text = "🏃 Walk into the portal at the back of <b>your base</b> to run!",
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -16),
-		Size = UDim2.new(0.7, 0, 0, 30),
+		Size = UDim2.new(0.6, 0, 0, 28),
 		Parent = hud,
 	})
 
@@ -498,8 +579,8 @@ function LobbyUI.Init(playerGui: PlayerGui)
 	definePanel("Loadout", "⚙️ EQUIPMENT", function(content)
 		buildLoadout(content)
 	end)
-	definePanel("Collection", "🧠 BRAINROT COLLECTION", function(content)
-		buildCollection(content)
+	definePanel("Brainrots", "🧠 MY BRAINROTS", function(content)
+		buildBrainrots(content)
 	end)
 	definePanel("Leaderboard", "🏆 LEADERBOARDS", function(content)
 		buildLeaderboard(content)
@@ -511,7 +592,10 @@ function LobbyUI.Init(playerGui: PlayerGui)
 		buildStats(content)
 	end)
 
-	-- Lobby stations use ProximityPrompts tagged with the panel to open.
+	-- Crate reveals sit above everything else.
+	revealLayer = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 30, Parent = UIKit.New("ScreenGui", { Name = "CrateReveal", ResetOnSpawn = false, DisplayOrder = 20, Parent = playerGui }) })
+
+	-- World stations (crate stands, buddy pad, equipment stands…) open panels too.
 	ProximityPromptService.PromptTriggered:Connect(function(prompt)
 		local panel = prompt:GetAttribute("OpenPanel")
 		if panel then

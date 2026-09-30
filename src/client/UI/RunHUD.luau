@@ -276,8 +276,8 @@ function RunHUD.ShowResults(results: any)
 	for crateId, count in results.crates do
 		table.insert(rows, ("📦 Found %d %s crate%s!"):format(count, crateId, if count == 1 then "" else "s"))
 	end
-	for _, b in results.discovered do
-		table.insert(rows, ("🧠 Discovered %s %s!"):format(b.icon, b.name))
+	for _, b in results.caught or {} do
+		table.insert(rows, ("🧠 Caught %s %s%s  (+%s/s on your base)"):format(b.icon, b.name, if b.isNew then " — NEW!" else "", Util.FormatNumber(b.income)))
 	end
 	for i, text in rows do
 		local label = UIKit.Label({ Text = text, Size = UDim2.new(1, 0, 0, 28), LayoutOrder = i + 1, Parent = resultsPanel })

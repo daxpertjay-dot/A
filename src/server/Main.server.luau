@@ -15,11 +15,13 @@ local PlayerData = require(script.Parent.PlayerData)
 local Economy = require(script.Parent.Economy)
 local Leaderboards = require(script.Parent.Leaderboards)
 local LobbyBuilder = require(script.Parent.Lobby.LobbyBuilder)
+local PlotManager = require(script.Parent.Lobby.PlotManager)
 local RunManager = require(script.Parent.Run.RunManager)
 
 Players.RespawnTime = 2
 
 LobbyBuilder.Build()
+PlotManager.Init() -- before PlayerData so it sees every profile load
 PlayerData.Init()
 Economy.Init()
 Leaderboards.Init()

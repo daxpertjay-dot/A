@@ -1,6 +1,7 @@
 --!strict
--- The Brainrot collection. Brainrots are encountered during runs (special
--- Brainrot sections) and show up in the lobby collection gallery.
+-- Brainrots: caught during runs (special Brainrot sections), displayed on
+-- your base where they earn coins every second, and one can be your run
+-- buddy for its perks.
 -- `look` drives the primitive model builder in ModelFactory so every
 -- Brainrot has a physical model without needing uploaded meshes.
 
@@ -11,13 +12,31 @@ export type Look = {
 	scale: number,
 }
 
+-- Run-buddy perks. The Brainrot you pick as your buddy follows you on runs
+-- and grants its perks.
+export type PerkKind =
+	"StartGap" -- +seconds of head start on Sahur
+	| "Magnet" -- always-on coin magnet (radius)
+	| "ExtraCharges" -- +charges on every equipped item
+	| "GapRecovery" -- chase gap recovers faster (fraction)
+	| "BumpResist" -- bumps cost less chase gap (fraction)
+	| "StartShield" -- start every run shielded (seconds)
+	| "CoinBonus" -- more coins (fraction)
+	| "CrashThrough" -- smash wooden walls at lower speed (studs/sec)
+
+export type Perk = { kind: PerkKind, value: number }
+
 export type Brainrot = {
 	id: string,
 	name: string,
 	icon: string,
 	rarity: string,
 	description: string,
-	minDistance: number, -- earliest distance (m) it can appear in a run
+	minDistance: number, -- earliest distance (m) it can be caught in a run
+	income: number, -- coins per second while displayed on your base
+	catchWeight: number, -- how often it shows up to be caught (0 = never)
+	perks: { Perk },
+	perkText: string,
 	look: Look,
 }
 
@@ -31,6 +50,7 @@ local list: { Brainrot } = {
 		rarity = "Mythic",
 		description = "The log with a bat. He is always behind you.",
 		minDistance = 0,
+		income = 1, catchWeight = 0, perks = { { kind = "StartGap", value = 2 } }, perkText = "+2s head start on Sahur",
 		look = { body = Color3.fromRGB(176, 124, 74), accent = Color3.fromRGB(90, 60, 30), shape = "Log", scale = 1 },
 	},
 	{
@@ -40,6 +60,7 @@ local list: { Brainrot } = {
 		rarity = "Rare",
 		description = "A three-legged shark in Nike sneakers.",
 		minDistance = 150,
+		income = 8, catchWeight = 25, perks = { { kind = "Magnet", value = 10 } }, perkText = "Always-on coin magnet",
 		look = { body = Color3.fromRGB(80, 140, 200), accent = Color3.fromRGB(255, 255, 255), shape = "Shark", scale = 1 },
 	},
 	{
@@ -49,6 +70,7 @@ local list: { Brainrot } = {
 		rarity = "Epic",
 		description = "Half crocodile, half bomber plane, all chaos.",
 		minDistance = 400,
+		income = 20, catchWeight = 12, perks = { { kind = "ExtraCharges", value = 1 } }, perkText = "+1 charge on all equipment",
 		look = { body = Color3.fromRGB(70, 140, 60), accent = Color3.fromRGB(120, 120, 130), shape = "Croc", scale = 1.1 },
 	},
 	{
@@ -58,6 +80,7 @@ local list: { Brainrot } = {
 		rarity = "Rare",
 		description = "A cappuccino that dances. Mimimi.",
 		minDistance = 250,
+		income = 8, catchWeight = 25, perks = { { kind = "GapRecovery", value = 0.4 } }, perkText = "Escape Sahur 40% faster",
 		look = { body = Color3.fromRGB(255, 190, 220), accent = Color3.fromRGB(150, 100, 60), shape = "Cup", scale = 1 },
 	},
 	{
@@ -67,6 +90,7 @@ local list: { Brainrot } = {
 		rarity = "Uncommon",
 		description = "A forest monkey-tree with enormous feet.",
 		minDistance = 100,
+		income = 3, catchWeight = 50, perks = { { kind = "BumpResist", value = 0.3 } }, perkText = "Crashes cost 30% less",
 		look = { body = Color3.fromRGB(110, 80, 50), accent = Color3.fromRGB(70, 170, 70), shape = "Tree", scale = 1.1 },
 	},
 	{
@@ -76,6 +100,7 @@ local list: { Brainrot } = {
 		rarity = "Epic",
 		description = "A cactus elephant in sandals. Controls time, somehow.",
 		minDistance = 700,
+		income = 20, catchWeight = 12, perks = { { kind = "StartShield", value = 6 } }, perkText = "Start every run with a 6s shield",
 		look = { body = Color3.fromRGB(90, 170, 90), accent = Color3.fromRGB(200, 200, 200), shape = "Elephant", scale = 1.1 },
 	},
 	{
@@ -85,6 +110,7 @@ local list: { Brainrot } = {
 		rarity = "Uncommon",
 		description = "A chimp living inside a banana.",
 		minDistance = 50,
+		income = 3, catchWeight = 50, perks = { { kind = "CoinBonus", value = 0.1 } }, perkText = "+10% coins",
 		look = { body = Color3.fromRGB(250, 220, 60), accent = Color3.fromRGB(90, 60, 40), shape = "Banana", scale = 1 },
 	},
 	{
@@ -94,6 +120,7 @@ local list: { Brainrot } = {
 		rarity = "Legendary",
 		description = "A coffee cup with katanas. You never see him coming.",
 		minDistance = 1200,
+		income = 50, catchWeight = 4, perks = { { kind = "CrashThrough", value = 10 } }, perkText = "Smash wooden walls at lower speed",
 		look = { body = Color3.fromRGB(60, 40, 30), accent = Color3.fromRGB(230, 230, 240), shape = "Cup", scale = 1 },
 	},
 	{
@@ -103,6 +130,7 @@ local list: { Brainrot } = {
 		rarity = "Epic",
 		description = "A goose fighter jet. Bombardiro's little cousin.",
 		minDistance = 900,
+		income = 20, catchWeight = 12, perks = { { kind = "CoinBonus", value = 0.25 } }, perkText = "+25% coins",
 		look = { body = Color3.fromRGB(240, 240, 240), accent = Color3.fromRGB(255, 150, 40), shape = "Goose", scale = 1 },
 	},
 	{
@@ -112,6 +140,7 @@ local list: { Brainrot } = {
 		rarity = "Legendary",
 		description = "A shrimp with a cat's face. Nobody knows why.",
 		minDistance = 1600,
+		income = 50, catchWeight = 4, perks = { { kind = "Magnet", value = 16 }, { kind = "CoinBonus", value = 0.15 } }, perkText = "Big magnet + 15% coins",
 		look = { body = Color3.fromRGB(255, 140, 110), accent = Color3.fromRGB(250, 220, 180), shape = "Cat", scale = 1 },
 	},
 }
@@ -134,11 +163,51 @@ end
 function BrainrotData.AvailableAt(distance: number): { Brainrot }
 	local out = {}
 	for _, b in list do
-		if b.id ~= BrainrotData.ChaserId and distance >= b.minDistance then
+		if b.catchWeight > 0 and distance >= b.minDistance then
 			table.insert(out, b)
 		end
 	end
 	return out
 end
+
+-- Weighted pick of a catchable Brainrot (rarer ones show up less).
+function BrainrotData.PickCatchable(distance: number, rng: Random): Brainrot?
+	local pool = BrainrotData.AvailableAt(distance)
+	local total = 0
+	for _, b in pool do
+		total += b.catchWeight
+	end
+	if total <= 0 then
+		return nil
+	end
+	local roll = rng:NextNumber() * total
+	for _, b in pool do
+		if roll < b.catchWeight then
+			return b
+		end
+		roll -= b.catchWeight
+	end
+	return pool[#pool]
+end
+
+-- Sums a buddy's perks into one table: { StartGap = 2, Magnet = 10, ... }.
+function BrainrotData.PerkTotals(id: string?): { [string]: number }
+	local totals = {}
+	local b = if id then byId[id] else nil
+	if b then
+		for _, perk in b.perks do
+			totals[perk.kind] = (totals[perk.kind] or 0) + perk.value
+		end
+	end
+	return totals
+end
+
+BrainrotData.RarityColors = {
+	Uncommon = Color3.fromRGB(110, 220, 110),
+	Rare = Color3.fromRGB(60, 150, 255),
+	Epic = Color3.fromRGB(190, 90, 255),
+	Legendary = Color3.fromRGB(255, 180, 30),
+	Mythic = Color3.fromRGB(255, 70, 110),
+} :: { [string]: Color3 }
 
 return BrainrotData

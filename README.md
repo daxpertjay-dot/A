@@ -1,14 +1,14 @@
 # 🧠 Brainrot Runner
 
-A Roblox endless runner built around a Brainrot-themed social hub. Players spawn in a chaotic lobby, walk into the run gate, and get chased down a procedurally generated, destructible city by **Tung Tung Tung Sahur**.
+A Roblox endless runner with a blocky, tycoon-style lobby (in the spirit of Steal a Brainrot and Grow a Garden). Every player gets their own base on the street. You catch Brainrots on runs; they earn coins on your base, and one of them runs with you as a buddy with perks. Meanwhile **Tung Tung Tung Sahur** chases you down a procedurally generated, destructible city.
 
 ```
-JOIN → BRAINROT LOBBY → (crates / equipment / shop / collection / leaderboards / daily)
-     → walk into RUN GATE → "RUN STARTING..." → STARTING AREA → Sahur intro
-     → 3… 2… 1… RUN! → ENDLESS RUN → caught → REVIVE or END → REWARDS → LOBBY
+JOIN → YOUR BASE (Brainrots earn coins · collect pad · buddy · equipment)
+     → walk into YOUR RUN PORTAL → "RUN STARTING..." → Sahur intro → 3… 2… 1… RUN!
+     → dodge / smash / CATCH BRAINROTS → caught → REVIVE or END → REWARDS → back to your base
 ```
 
-The whole game (lobby geometry, track segments, Brainrot models and UI) is built from code, so it runs in an empty place with no uploaded assets.
+The whole game (lobby, plots, track segments, Brainrot models and UI) is built from code, so it runs in an empty place with no uploaded assets.
 
 ## Getting it into Roblox Studio
 
@@ -40,7 +40,7 @@ To use DataStores and leaderboards in Studio, turn on **Game Settings → Securi
 | Roll (fast-fall in the air) | S / ↓ | swipe down | B |
 | Equipment slot 1–3 | 1 / 2 / 3 | tap the buttons | X / Y / RB |
 
-In the lobby you walk around normally and press **E** at stations and NPCs.
+In the lobby you walk around normally. Use the HUD buttons, or press **E** at stations.
 
 ## Project layout
 
@@ -50,7 +50,7 @@ src/
 │   ├── Config.luau            ← all tuning: speeds, camera, chase, destruction, prices
 │   ├── EquipmentData.luau     equipment catalog (Shield, Magnet, Speed Boost, Bomb, Coin Doubler)
 │   ├── CrateData.luau         crate prices + drop odds
-│   ├── BrainrotData.luau      the Brainrot collection
+│   ├── BrainrotData.luau      Brainrots: income, catch rarity, buddy perks
 │   ├── DailyRewardData.luau   7-day reward track
 │   ├── ImpactRules.luau       what happens when you hit things (shared client/server)
 │   ├── ModelFactory.luau      primitive Brainrot models (swap for meshes later)
@@ -60,7 +60,8 @@ src/
 │   ├── PlayerData.luau        DataStore profiles, leaderstats
 │   ├── Economy.luau           crates, loadout, daily rewards, Robux receipts
 │   ├── Leaderboards.luau      OrderedDataStores + the giant lobby board
-│   ├── Lobby/LobbyBuilder.luau  the hub: spawn, stations, NPCs, run gate, decor, secrets
+│   ├── Lobby/LobbyBuilder.luau  blocky street, shops, conveyors, public run gate
+│   ├── Lobby/PlotManager.luau   player bases: pedestals, income pad, buddy, equipment, run portal
 │   └── Run/
 │       ├── RunManager.luau    run lifecycle, validation, rewards
 │       ├── TrackGenerator.luau  generates segments ahead / recycles behind
@@ -72,29 +73,53 @@ src/
     ├── RunController.luau     Subway Surfers-style movement state machine + collisions
     ├── RunCamera.luau         behind/above chase cam, FOV, shake, Sahur intro shot
     ├── Chaser.luau            Tung Tung Tung Sahur
+    ├── Buddy.luau             your run buddy jogging beside you
     ├── DebrisFX.luau          client-side debris + explosions
-    ├── LobbyFX.luau           spinning / dancing / wandering lobby life
+    ├── LobbyFX.luau           spinning / dancing / wandering lobby life, conveyor stripes
     └── UI/ (UIKit, LobbyUI, RunHUD)
 ```
 
 ## How the main systems work
 
-### Lobby hub
-`LobbyBuilder` builds the plaza in the layout from the mockup:
+### Lobby: street, conveyors and bases
+- `LobbyBuilder` builds a blocky street with classic studs (`Config.Lobby.UseStuds`). Down the middle are the 📦 crate shop, 🛒 shop, 🎁 daily reward, 🏆 leaderboard and a public run gate.
+- A **conveyor loop** runs around the street. The belts are anchored parts with a velocity, so they carry players; the moving yellow stripes are drawn client-side.
+- **Everything opens from anywhere** via the HUD buttons on the left (Crates, Gear, Brainrots, Shop, Daily, Top, Stats, My Base). The world stations open the same panels.
+- **Crates open where you buy them.** "BUY & OPEN" charges you and plays the reveal immediately. Crates you earned (daily, run vaults) open from the same panel.
 
-- 🏆 leaderboard to the north
-- 📦 crates to the west, 🛒 shop to the east
-- ⚙️ loadout, 🧠 collection, 🎁 daily reward and 📊 stats stations in the corners
-- the 🏃 run gate to the south
+### Your base (`PlotManager`)
+Each player is assigned one of 8 plots, and you spawn there. A plot has:
 
-The run gate is a giant log-pillared arch with a tunnel and a portal, with a road fading into the distance behind it. Walking into the portal starts a run.
+- **8 Brainrot pedestals.** Your best earners are displayed and each earns coins per second.
+- A **💰 collect pad.** Step on it to bank what they earned. You also get offline earnings at half speed, capped at 2h.
+- A **🤝 buddy pad.** Your chosen run buddy stands here; press E to change it.
+- **⚙️ Equipment stands** showing your loadout (press E to change it).
+- A **mini run lane** ending in your personal **🏃 START RUN portal**. Only the owner can use it.
 
-Each station has a Brainrot NPC with a speech bubble and a ProximityPrompt that opens its panel. The lobby is also full of set dressing: a giant Sahur statue, floating props, wonky buildings, animated billboards, wandering Brainrots, and a hidden staircase to a secret golden brain. All of that motion is animated client-side.
+### Brainrots
+- **Catch them in runs.** Brainrot Special sections put a Brainrot inside a glowing ring in one lane; run through it to catch it. Rarer ones appear less often and only further into a run.
+- **Income.** They earn coins/sec on your base: Uncommon 3, Rare 8, Epic 20, Legendary 50.
+- **Run buddy.** Pick one in the Brainrots panel. It jogs beside you and grants its perk:
+
+| Brainrot | Perk |
+|---|---|
+| Tung Tung Tung Sahur | +2s head start |
+| Tralalero Tralala | always-on coin magnet |
+| Bombardiro Crocodilo | +1 charge on all equipment |
+| Ballerina Cappuccina | escape Sahur 40% faster |
+| Brr Brr Patapim | crashes cost 30% less |
+| Lirilì Larilà | start with a 6s shield |
+| Chimpanzini Bananini | +10% coins |
+| Cappuccino Assassino | smash wooden walls at lower speed |
+| Bombombini Gusini | +25% coins |
+| Trippi Troppi | big magnet + 15% coins |
 
 ### Run controller (client)
 - The character is driven kinematically. Default controls are disabled, and the Humanoid is put in the `Physics` state.
 - The runner moves forward automatically along 3 fixed lanes at `x = -8 / 0 / 8`, sliding smoothly between them.
 - Jumping follows a fixed arc. Rolling shrinks the hitbox and plays a somersault. Pressing roll in the air fast-falls.
+- Jumping **instantly cancels a roll**. A jump pressed up to 0.18s before landing fires on touchdown (`Config.Run.JumpBuffer`).
+- Run and jump animations come from `Config.Animations`. A list of Roblox animation-pack IDs is in the comments there, so you can swap in any pack or your own uploads.
 - Movement states: `Running → Jumping → Falling → Running`, `Rolling → Running`, `Staggered`, `Caught`.
 - Speed follows `Config.Run.SpeedCurve` (45 → 48 → 52 → 58 → 70 studs/s at 0 / 500 / 1000 / 2000 / 5000 m).
 - Ground and obstacles are found with raycasts and box queries on dedicated collision groups (`RunGround`, `RunObstacle`). This lets the runner go up ramps, run across train roofs, and pass through scenery.
@@ -141,4 +166,5 @@ Destructible objects carry `Health`, `Tier`, `ExplosionResistance`, `CollisionDa
 
 - **Robux products**: create developer products and put their IDs in `Config.DeveloperProducts`. Robux buttons do nothing until then.
 - **Sounds**: add asset IDs to `Config.Sounds`. The game is silent until you do.
+- **Studs**: the lobby uses classic `Studs`/`Inlet` part surfaces. If your place doesn't show them, set `Config.Lobby.UseStuds = false` or swap in a stud texture.
 - **StreamingEnabled**: runs happen far from the lobby (X ≥ 6000). The server calls `RequestStreamAroundAsync` before teleporting, but if you see the track pop in, consider turning streaming off or raising the minimum streaming radius.

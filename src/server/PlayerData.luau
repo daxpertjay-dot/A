@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local EquipmentData = require(Shared.EquipmentData)
 local Remotes = require(Shared.Remotes)
@@ -27,7 +28,11 @@ export type Profile = {
 	Inventory: { [string]: number }, -- itemId -> copies owned
 	Crates: { [string]: number }, -- crateId -> unopened crates
 	Loadout: { string }, -- itemIds by slot ("" = empty)
-	Collection: { [string]: boolean }, -- brainrotId -> unlocked
+	Collection: { [string]: boolean }, -- brainrotId -> discovered
+	Brainrots: { [string]: number }, -- brainrotId -> copies owned
+	Buddy: string, -- Brainrot that joins your runs ("" = none)
+	PendingIncome: number, -- coins waiting on your base's collect pad
+	LastOnline: number, -- os.time() of the last save (offline earnings)
 	Secrets: { [string]: boolean },
 	Stats: Stats,
 	Daily: { LastClaimDay: number, Streak: number },
@@ -56,7 +61,11 @@ local function newProfile(): Profile
 		Inventory = { [EquipmentData.StarterItem] = 1 },
 		Crates = { Common = 1 },
 		Loadout = { EquipmentData.StarterItem, "", "" },
-		Collection = {},
+		Collection = { [BrainrotData.ChaserId] = true },
+		Brainrots = { [BrainrotData.ChaserId] = 1 },
+		Buddy = BrainrotData.ChaserId,
+		PendingIncome = 0,
+		LastOnline = 0,
 		Secrets = {},
 		Stats = {
 			BestDistance = 0,
@@ -138,6 +147,52 @@ function PlayerData.Await(player: Player, timeout: number?): Profile?
 	return profiles[player]
 end
 
+-- Brainrots shown on the player's base (and earning), best earners first.
+-- Every owned copy takes a pedestal, up to Config.Plot.Pedestals.
+function PlayerData.DisplayedBrainrots(profile: Profile): { string }
+	local copies = {}
+	for id, count in profile.Brainrots do
+		if BrainrotData.Get(id) then
+			for _ = 1, count do
+				table.insert(copies, id)
+			end
+		end
+	end
+	table.sort(copies, function(a, b)
+		local da, db = BrainrotData.Get(a) :: BrainrotData.Brainrot, BrainrotData.Get(b) :: BrainrotData.Brainrot
+		if da.income ~= db.income then
+			return da.income > db.income
+		end
+		return a < b
+	end)
+	local out = {}
+	for i = 1, math.min(#copies, Config.Plot.Pedestals) do
+		out[i] = copies[i]
+	end
+	return out
+end
+
+function PlayerData.IncomePerSecond(profile: Profile): number
+	local total = 0
+	for _, id in PlayerData.DisplayedBrainrots(profile) do
+		total += (BrainrotData.Get(id) :: BrainrotData.Brainrot).income
+	end
+	return total
+end
+
+function PlayerData.GrantBrainrot(player: Player, id: string, count: number?)
+	local profile = profiles[player]
+	if not profile or not BrainrotData.Get(id) then
+		return
+	end
+	profile.Brainrots[id] = (profile.Brainrots[id] or 0) + (count or 1)
+	profile.Collection[id] = true
+	if profile.Buddy == "" then
+		profile.Buddy = id
+	end
+	PlayerData.Changed(player)
+end
+
 function PlayerData.Snapshot(player: Player): any
 	local profile = profiles[player]
 	if not profile then
@@ -155,6 +210,11 @@ function PlayerData.Snapshot(player: Player): any
 		Crates = profile.Crates,
 		Loadout = profile.Loadout,
 		Collection = profile.Collection,
+		Brainrots = profile.Brainrots,
+		Buddy = profile.Buddy,
+		Displayed = PlayerData.DisplayedBrainrots(profile),
+		IncomePerSecond = PlayerData.IncomePerSecond(profile),
+		PendingIncome = math.floor(profile.PendingIncome),
 		Stats = profile.Stats,
 		Daily = profile.Daily,
 		UnlockedSlots = unlockedSlots,
@@ -167,6 +227,13 @@ function PlayerData.UnlockedSlots(player: Player): number
 	return if snapshot then snapshot.UnlockedSlots else 1
 end
 
+local changedListeners: { (Player) -> () } = {}
+
+-- Called after every profile change (the first call means "just loaded").
+function PlayerData.OnChanged(callback: (Player) -> ())
+	table.insert(changedListeners, callback)
+end
+
 function PlayerData.Changed(player: Player)
 	local profile = profiles[player]
 	if not profile then
@@ -174,6 +241,9 @@ function PlayerData.Changed(player: Player)
 	end
 	refreshLeaderstats(player, profile)
 	Remotes.Event("DataUpdated"):FireClient(player, PlayerData.Snapshot(player))
+	for _, callback in changedListeners do
+		task.spawn(callback, player)
+	end
 end
 
 function PlayerData.AddCoins(player: Player, amount: number)
@@ -183,6 +253,22 @@ function PlayerData.AddCoins(player: Player, amount: number)
 	end
 	profile.Coins = math.max(0, profile.Coins + amount)
 	PlayerData.Changed(player)
+end
+
+-- Moves the coins waiting on the base's collect pad into the wallet.
+function PlayerData.CollectIncome(player: Player): number
+	local profile = profiles[player]
+	if not profile then
+		return 0
+	end
+	local amount = math.floor(profile.PendingIncome)
+	if amount <= 0 then
+		return 0
+	end
+	profile.PendingIncome -= amount
+	profile.Coins += amount
+	PlayerData.Changed(player)
+	return amount
 end
 
 function PlayerData.GrantItem(player: Player, itemId: string)
@@ -220,6 +306,7 @@ function PlayerData.Save(player: Player)
 		return
 	end
 	local dataStore = store :: DataStore
+	profile.LastOnline = os.time()
 	retry("Save " .. player.Name, function()
 		dataStore:SetAsync(keyFor(player), profile, { player.UserId })
 		return true
@@ -255,6 +342,20 @@ local function onPlayerAdded(player: Player)
 	if not player.Parent then
 		return
 	end
+	-- Older saves: everyone owns Sahur, and a discovered-but-unowned chaser
+	-- from v1 becomes owned.
+	if (profile.Brainrots[BrainrotData.ChaserId] or 0) == 0 then
+		profile.Brainrots[BrainrotData.ChaserId] = 1
+		profile.Collection[BrainrotData.ChaserId] = true
+	end
+	if profile.Buddy ~= "" and (profile.Brainrots[profile.Buddy] or 0) == 0 then
+		profile.Buddy = BrainrotData.ChaserId
+	end
+	-- Offline earnings (half speed, capped).
+	if profile.LastOnline > 0 then
+		local away = math.clamp(os.time() - profile.LastOnline, 0, Config.Plot.OfflineIncomeCap)
+		profile.PendingIncome += away * PlayerData.IncomePerSecond(profile) * Config.Plot.OfflineIncomeRate
+	end
 	profiles[player] = profile
 	PlayerData.Changed(player)
 end
@@ -285,6 +386,17 @@ function PlayerData.Init()
 		PlayerData.Await(player, 10)
 		return PlayerData.Snapshot(player)
 	end
+
+	-- Base income: every displayed Brainrot earns coins each second; players
+	-- collect them from the pad on their base.
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			for _, profile in profiles do
+				profile.PendingIncome += PlayerData.IncomePerSecond(profile)
+			end
+		end
+	end)
 
 	-- Autosave
 	task.spawn(function()

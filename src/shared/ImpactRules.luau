@@ -20,7 +20,8 @@ export type Result = {
 
 local ImpactRules = {}
 
-function ImpactRules.Resolve(tier: number, collisionDamage: number, speed: number, boostActive: boolean, shieldActive: boolean): Result
+-- `crashSpeedBonus` lowers the speed needed to smash tier 2 walls (buddy perk).
+function ImpactRules.Resolve(tier: number, collisionDamage: number, speed: number, boostActive: boolean, shieldActive: boolean, crashSpeedBonus: number?): Result
 	if shieldActive then
 		if tier <= 2 then
 			return { outcome = "Absorbed", damage = math.huge }
@@ -32,7 +33,7 @@ function ImpactRules.Resolve(tier: number, collisionDamage: number, speed: numbe
 	if tier <= 1 then
 		return { outcome = "Smash", damage = math.huge }
 	elseif tier == 2 then
-		if boostActive or speed >= Config.Destruction.CrashThroughSpeed then
+		if boostActive or speed >= Config.Destruction.CrashThroughSpeed - (crashSpeedBonus or 0) then
 			return { outcome = "CrashThrough", damage = math.huge }
 		end
 		return { outcome = "Bump", damage = collisionDamage }

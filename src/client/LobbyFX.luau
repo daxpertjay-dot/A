@@ -1,15 +1,10 @@
 --!strict
 -- Makes the lobby feel alive, entirely client-side (no server bandwidth):
--- spinning crates, bobbing floaters, pulsing neon, NPCs doing stupid dances,
--- random Brainrots wandering around, loadout holograms and the collection
--- gallery (locked Brainrots show as black silhouettes).
+-- spinning crates, bobbing floaters, pulsing neon, Brainrots dancing on their
+-- pedestals, Brainrots wandering the street and moving conveyor stripes.
 
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
-
-local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
-local BrainrotData = require(Shared.BrainrotData)
-local EquipmentData = require(Shared.EquipmentData)
 
 local LobbyFX = {}
 
@@ -18,7 +13,6 @@ type Animated = { instance: Instance, base: CFrame, data: { [string]: any } }
 local groups: { [string]: { Animated } } = {}
 local enabled = true
 local wanderState: { [Instance]: { home: Vector3, target: Vector3, pos: Vector3, yaw: number, rng: Random } } = {}
-local originalColors: { [BasePart]: Color3 } = {}
 
 local function baseOf(instance: Instance): CFrame
 	if instance:IsA("Model") then
@@ -51,6 +45,16 @@ local function track(tag: string)
 		add(instance)
 	end
 	CollectionService:GetInstanceAddedSignal(tag):Connect(add)
+	-- Plot Brainrots come and go as bases refresh.
+	CollectionService:GetInstanceRemovedSignal(tag):Connect(function(instance)
+		local list = groups[tag]
+		for i = #list, 1, -1 do
+			if list[i].instance == instance then
+				table.remove(list, i)
+			end
+		end
+		wanderState[instance] = nil
+	end)
 end
 
 local DANCES: { [string]: (t: number) -> CFrame } = {
@@ -126,68 +130,48 @@ local function step(dt: number)
 	end
 end
 
--- Loadout holograms show the equipped item icons.
-function LobbyFX.UpdateLoadout(loadout: { string }, unlockedSlots: number)
-	for _, holo in CollectionService:GetTagged("LoadoutHolo") do
-		if holo:IsA("BasePart") then
-			local slot = holo:GetAttribute("Slot") or 1
-			local gui = holo:FindFirstChild("Icon") :: BillboardGui?
-			if not gui then
-				local g = Instance.new("BillboardGui")
-				g.Name = "Icon"
-				g.Size = UDim2.fromOffset(120, 90)
-				g.StudsOffset = Vector3.new(0, 3.5, 0)
-				g.MaxDistance = 120
-				local label = Instance.new("TextLabel")
-				label.Name = "Text"
-				label.Size = UDim2.fromScale(1, 1)
-				label.BackgroundTransparency = 1
-				label.Font = Enum.Font.FredokaOne
-				label.TextScaled = true
-				label.TextColor3 = Color3.new(1, 1, 1)
-				label.Parent = g
-				local stroke = Instance.new("UIStroke")
-				stroke.Thickness = 2
-				stroke.Parent = label
-				g.Parent = holo
-				gui = g
-			end
-			local label = (gui :: BillboardGui):FindFirstChild("Text") :: TextLabel
-			local item = EquipmentData.Get(loadout[slot])
-			if slot > unlockedSlots then
-				label.Text = "🔒\nLOCKED"
-			elseif item then
-				label.Text = item.icon .. "\n" .. item.name
-				holo.Color = EquipmentData.RarityColors[item.rarity]
-			else
-				label.Text = "➕\nEMPTY"
-			end
-		end
+-- Conveyor belts: the server part does the carrying (AssemblyLinearVelocity);
+-- here we add yellow stripes that slide along it so you can see which way
+-- it goes.
+type Belt = { part: BasePart, stripes: { BasePart }, speed: number, spacing: number, offset: number }
+local belts: { Belt } = {}
+local STRIPE_SPACING = 4
+
+local function addConveyor(instance: Instance)
+	if not instance:IsA("BasePart") then
+		return
 	end
+	local belt: Belt = { part = instance, stripes = {}, speed = instance:GetAttribute("Speed") or 30, spacing = STRIPE_SPACING, offset = 0 }
+	local count = math.floor(instance.Size.Z / STRIPE_SPACING)
+	for _ = 1, count do
+		local stripe = Instance.new("Part")
+		stripe.Name = "ConveyorStripe"
+		stripe.Anchored = true
+		stripe.CanCollide = false
+		stripe.CanQuery = false
+		stripe.CanTouch = false
+		stripe.CastShadow = false
+		stripe.Material = Enum.Material.Neon
+		stripe.Color = Color3.fromRGB(255, 210, 50)
+		stripe.Size = Vector3.new(instance.Size.X * 0.7, 0.05, 0.7)
+		stripe.Parent = instance
+		table.insert(belt.stripes, stripe)
+	end
+	table.insert(belts, belt)
 end
 
--- Collection gallery: unlocked Brainrots in full colour, locked as silhouettes.
-function LobbyFX.UpdateCollection(collection: { [string]: boolean })
-	for _, model in CollectionService:GetTagged("CollectionDisplay") do
-		local id = model:GetAttribute("BrainrotId")
-		local unlocked = collection[id] == true
-		for _, d in model:GetDescendants() do
-			if d:IsA("BasePart") and d.Name ~= "Root" then
-				if originalColors[d] == nil then
-					originalColors[d] = d.Color
-				end
-				d.Color = if unlocked then originalColors[d] else Color3.fromRGB(15, 15, 20)
+local function stepConveyors(dt: number)
+	for _, belt in belts do
+		local p = belt.part
+		local length = p.Size.Z
+		belt.offset = (belt.offset + belt.speed * dt) % belt.spacing
+		for i, stripe in belt.stripes do
+			-- Stripes move toward the part's -Z (its LookVector = belt direction).
+			local z = length / 2 - ((i - 1) * belt.spacing + belt.offset)
+			if z < -length / 2 then
+				z += length
 			end
-		end
-	end
-	for _, label in CollectionService:GetTagged("CollectionLabel") do
-		if label:IsA("TextLabel") then
-			local data = BrainrotData.Get(label:GetAttribute("BrainrotId") or "")
-			if data and collection[data.id] then
-				label.Text = data.icon .. " " .. data.name
-			else
-				label.Text = "??? LOCKED"
-			end
+			stripe.CFrame = p.CFrame * CFrame.new(0, p.Size.Y / 2 + 0.03, z)
 		end
 	end
 end
@@ -200,7 +184,16 @@ function LobbyFX.Init()
 	for _, tag in { "LobbySpin", "LobbySpinZ", "LobbyFloat", "LobbyPulse", "LobbyDance", "LobbyWander" } do
 		track(tag)
 	end
-	RunService.RenderStepped:Connect(step)
+	for _, belt in CollectionService:GetTagged("Conveyor") do
+		addConveyor(belt)
+	end
+	CollectionService:GetInstanceAddedSignal("Conveyor"):Connect(addConveyor)
+	RunService.RenderStepped:Connect(function(dt)
+		step(dt)
+		if enabled then
+			stepConveyors(dt)
+		end
+	end)
 end
 
 return LobbyFX

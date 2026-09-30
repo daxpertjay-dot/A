@@ -76,6 +76,9 @@ local state = {
 	boostMultiplier = 1,
 	magnetUntil = 0,
 	magnetRadius = 0,
+	jumpBufferedUntil = 0,
+	perks = {} :: { [string]: number }, -- run buddy perk totals
+	buddy = "",
 	doublerUntil = 0,
 	coins = 0,
 	meters = 0,
@@ -90,6 +93,7 @@ RunController.Impact = Signal.new() -- (outcome: string)
 RunController.CoinCollected = Signal.new()
 RunController.LoadoutChanged = Signal.new()
 RunController.Event = Signal.new() -- (message: string, color: Color3?)
+RunController.BrainrotCaught = Signal.new() -- (event)
 
 local player = Players.LocalPlayer
 local character: Model? = nil
@@ -109,16 +113,10 @@ rayParams.FilterType = Enum.RaycastFilterType.Include
 local ignore: { [Instance]: number } = {}
 local coins: { BasePart } = {}
 local pickups: { BasePart } = {}
-local encounters: { Model } = {}
-local reportedEncounters: { [Instance]: boolean } = {}
 local connections: { RBXScriptConnection } = {}
 local tracks: { [string]: AnimationTrack } = {}
 
--- Default Roblox animations (R15 / R6)
-local ANIMS = {
-	R15 = { Run = "rbxassetid://913376220", Jump = "rbxassetid://507765000", Idle = "rbxassetid://507766388" },
-	R6 = { Run = "rbxassetid://180426354", Jump = "rbxassetid://125750702", Idle = "rbxassetid://180435571" },
-}
+local ANIMS = Config.Animations
 
 local function now(): number
 	return os.clock()
@@ -136,7 +134,7 @@ local function loadAnimations(hum: Humanoid)
 		playing:Stop(0)
 	end
 	local set = if hum.RigType == Enum.HumanoidRigType.R6 then ANIMS.R6 else ANIMS.R15
-	for name, id in set do
+	for name, id in set :: { [string]: string } do
 		local anim = Instance.new("Animation")
 		anim.AnimationId = id
 		local ok, track = pcall(function()
@@ -223,8 +221,6 @@ local function register(d: Instance)
 		elseif d:GetAttribute("Pickup") then
 			table.insert(pickups, d)
 		end
-	elseif d:IsA("Model") and d:GetAttribute("Encounter") then
-		table.insert(encounters, d)
 	end
 end
 
@@ -254,7 +250,7 @@ local function addShake(amount: number)
 end
 
 local function loseGap(amount: number)
-	state.gap -= amount
+	state.gap -= amount * (1 - math.clamp(state.perks.BumpResist or 0, 0, 0.9))
 end
 
 local function isRolling(): boolean
@@ -292,9 +288,18 @@ local function changeLane(dir: number)
 end
 
 local function jump()
-	if not state.grounded or isRolling() or state.move == "Staggered" then
+	if state.move == "Staggered" then
 		return
 	end
+	if not state.grounded then
+		-- Pressed a little early: jump the moment we land.
+		state.jumpBufferedUntil = os.clock() + R.JumpBuffer
+		return
+	end
+	-- Jumping instantly cancels a roll, so roll → jump chains are snappy.
+	state.rollTime = 0
+	state.queuedRoll = false
+	state.jumpBufferedUntil = 0
 	state.vy = R.JumpVelocity
 	state.grounded = false
 end
@@ -303,6 +308,7 @@ local function roll()
 	if state.move == "Staggered" then
 		return
 	end
+	state.jumpBufferedUntil = 0
 	if state.grounded then
 		state.rollTime = R.RollDuration
 	else
@@ -372,7 +378,8 @@ local function onObstacle(obstacle: Instance, part: BasePart)
 		obstacle:GetAttribute("CollisionDamage") or 0,
 		state.speed,
 		t < state.boostUntil,
-		t < state.shieldUntil
+		t < state.shieldUntil,
+		state.perks.CrashThrough
 	)
 	local impact = Vector3.new(part.Position.X, bodyCenter().Y, part.Position.Z)
 	Remotes.Event("ReportHit"):FireServer(obstacle, { speed = state.speed, point = impact })
@@ -437,7 +444,7 @@ end
 local function updateCollectibles(dt: number)
 	local center = bodyCenter()
 	local t = now()
-	local magnet = t < state.magnetUntil
+	local magnetRadius = math.max(state.perks.Magnet or 0, if t < state.magnetUntil then state.magnetRadius else 0)
 	local spin = state.elapsed * 3
 
 	local i = 1
@@ -451,13 +458,13 @@ local function updateCollectibles(dt: number)
 			local ahead = center.Z - pos.Z -- positive when the coin is in front
 			if ahead > -6 and ahead < 220 then
 				local distance = (pos - center).Magnitude
-				if magnet and distance < state.magnetRadius then
+				if magnetRadius > 0 and distance < magnetRadius then
 					pos = pos:Lerp(center, Util.Damp(9, dt))
 					distance = (pos - center).Magnitude
 				end
 				if distance < 3.4 then
 					coin.Transparency = 1
-					state.coins += if t < state.doublerUntil then 2 else 1
+					state.coins += (if t < state.doublerUntil then 2 else 1) * (1 + (state.perks.CoinBonus or 0))
 					RunController.CoinCollected:Fire()
 					Remotes.Event("CollectCoin"):FireServer(coin)
 				else
@@ -476,28 +483,22 @@ local function updateCollectibles(dt: number)
 			pickups[#pickups] = nil
 		else
 			local pos = box.Position
-			if (pos - center).Magnitude < 4 then
+			local isBrainrot = box:GetAttribute("Pickup") == "Brainrot"
+			local reach = if isBrainrot then 5 else 4
+			if (pos - center).Magnitude < reach then
 				box.Transparency = 1
-				for _, child in box:GetChildren() do
-					if child:IsA("SurfaceGui") then
-						child.Enabled = false
+				for _, d in box:GetDescendants() do
+					if d:IsA("BasePart") then
+						d.Transparency = 1
+					elseif d:IsA("SurfaceGui") or d:IsA("BillboardGui") then
+						d.Enabled = false
 					end
 				end
 				Remotes.Event("PickupItem"):FireServer(box)
-			else
+			elseif not isBrainrot then
 				box.CFrame = CFrame.new(pos) * CFrame.Angles(0, spin * 0.7, 0)
 			end
 			i += 1
-		end
-	end
-
-	for _, model in encounters do
-		if not reportedEncounters[model] and model.Parent then
-			local encounterD = model:GetAttribute("EncounterD") or math.huge
-			if state.d >= encounterD - 40 then
-				reportedEncounters[model] = true
-				Remotes.Event("EncounterBrainrot"):FireServer(model:GetAttribute("Encounter"))
-			end
 		end
 	end
 end
@@ -530,7 +531,7 @@ local function applyCharacter(xVelocity: number)
 			playAnim("Jump")
 		end
 	else
-		playAnim("Run", math.clamp(state.speed / 30, 0.8, 2.2))
+		playAnim("Run", math.clamp(state.speed / ANIMS.RunSpeedDivisor, 0.8, 2.4))
 	end
 end
 
@@ -590,11 +591,14 @@ local function update(dt: number)
 	if ground and state.vy <= 0 and state.feetY <= ground + 0.05 then
 		state.feetY = ground
 		state.vy = 0
-		if not state.grounded and state.queuedRoll then
+		local justLanded = not state.grounded
+		state.grounded = true
+		if justLanded and os.clock() < state.jumpBufferedUntil then
+			jump()
+		elseif justLanded and state.queuedRoll then
 			state.rollTime = R.RollDuration
 		end
 		state.queuedRoll = false
-		state.grounded = true
 	elseif ground and state.grounded and state.feetY - ground < 1.2 and state.vy <= 0 then
 		-- Stick to slopes going down (ramps) instead of hopping off them.
 		state.feetY = ground
@@ -619,7 +623,7 @@ local function update(dt: number)
 
 	-- Chase pressure
 	if state.staggerTime <= 0 then
-		state.gap = math.min(C.MaxGap, state.gap + C.RecoverPerSecond * dt)
+		state.gap = math.min(C.MaxGap, state.gap + C.RecoverPerSecond * (1 + (state.perks.GapRecovery or 0)) * dt)
 	end
 	if state.feetY < -40 then
 		state.gap = 0
@@ -661,7 +665,10 @@ function RunController.Prepare(info: any): boolean
 	state.queuedRoll = false
 	state.speedFactor = 1
 	state.speed = 0
-	state.gap = C.StartGap
+	state.perks = info.perks or {}
+	state.buddy = info.buddy or ""
+	state.gap = C.StartGap + (state.perks.StartGap or 0)
+	state.jumpBufferedUntil = 0
 	state.invulnerableUntil = 0
 	state.shieldUntil, state.boostUntil, state.magnetUntil, state.doublerUntil = 0, 0, 0, 0
 	state.coins = 0
@@ -672,8 +679,6 @@ function RunController.Prepare(info: any): boolean
 	table.clear(ignore)
 	table.clear(coins)
 	table.clear(pickups)
-	table.clear(encounters)
-	table.clear(reportedEncounters)
 
 	for _, d in (info.trackFolder :: Instance):GetDescendants() do
 		register(d)
@@ -691,6 +696,10 @@ function RunController.Go()
 	if state.phase == "Intro" then
 		state.phase = "Running"
 		state.speedFactor = 0.5 -- quick burst off the line
+		if state.perks.StartShield then
+			state.shieldUntil = os.clock() + state.perks.StartShield
+			RunController.Event:Fire("🛡️ BUDDY SHIELD!", Color3.fromRGB(120, 200, 255))
+		end
 	end
 end
 
@@ -744,10 +753,13 @@ function RunController.HandleWorldEvent(event: any)
 			end
 		end
 		RunController.LoadoutChanged:Fire()
+	elseif event.type == "BrainrotCaught" then
+		RunController.Event:Fire(("%s CAUGHT %s!"):format(event.icon, string.upper(event.name)), Color3.fromRGB(255, 140, 230))
+		RunController.BrainrotCaught:Fire(event)
 	elseif event.type == "CrateFound" then
 		RunController.Event:Fire("📦 BONUS CRATE FOUND!", Color3.fromRGB(255, 190, 40))
 	elseif event.type == "BonusCoins" then
-		state.coins += event.amount
+		state.coins += event.amount * (1 + (state.perks.CoinBonus or 0))
 		RunController.Event:Fire(("🪙 +%d"):format(event.amount), Color3.fromRGB(255, 210, 60))
 	end
 end

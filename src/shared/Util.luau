@@ -20,6 +20,7 @@ export type PartProps = {
 	Reflectance: number?,
 	Parent: Instance?,
 	Class: string?, -- "Part" (default), "WedgePart", "CornerWedgePart"
+	Studs: boolean?, -- classic blocky look: studs on top, inlets underneath
 }
 
 function Util.Part(props: PartProps): BasePart
@@ -36,8 +37,13 @@ function Util.Part(props: PartProps): BasePart
 	part.CanTouch = if props.CanTouch == nil then false else props.CanTouch
 	part.CastShadow = if props.CastShadow == nil then true else props.CastShadow
 	part.Reflectance = props.Reflectance or 0
-	part.TopSurface = Enum.SurfaceType.Smooth
-	part.BottomSurface = Enum.SurfaceType.Smooth
+	if props.Studs then
+		part.TopSurface = Enum.SurfaceType.Studs
+		part.BottomSurface = Enum.SurfaceType.Inlet
+	else
+		part.TopSurface = Enum.SurfaceType.Smooth
+		part.BottomSurface = Enum.SurfaceType.Smooth
+	end
 	if props.Shape and part:IsA("Part") then
 		(part :: Part).Shape = props.Shape
 	end

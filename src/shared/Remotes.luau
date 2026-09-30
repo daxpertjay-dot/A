@@ -17,6 +17,7 @@ local EVENTS = {
 	"RunRevived", -- () continue running
 	"RunEnded", -- (results) rewards screen
 	"ReturnedToLobby", -- ()
+	"CrateRevealed", -- (reveal) a crate was opened (e.g. after a Robux purchase)
 
 	-- client → server
 	"ReportHit", -- (object, impactInfo)
@@ -26,17 +27,19 @@ local EVENTS = {
 	"ReportCaught", -- ()
 	"ChooseRevive", -- (useRevive: boolean)
 	"LeaveResults", -- () back to lobby from the rewards screen
-	"EncounterBrainrot", -- (brainrotId)
+	"GoToBase", -- () teleport to your own plot
 }
 
 local FUNCTIONS = {
 	"GetData",
 	"BuyCrate", -- (crateId, currency "Coins"|"Robux")
-	"OpenCrate", -- (crateId) -> rolled item
+	"OpenCrate", -- (crateId) -> reveal of an owned crate
+	-- BuyCrate with coins buys AND opens in one go, returning the reveal.
 	"EquipItem", -- (slotIndex, itemId?)
 	"ClaimDaily",
 	"GetLeaderboards",
 	"BuyCoinPack", -- (productKey)
+	"SetBuddy", -- (brainrotId) choose the Brainrot that joins your runs
 }
 
 local Remotes = {}

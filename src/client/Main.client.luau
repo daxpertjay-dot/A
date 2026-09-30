@@ -11,6 +11,7 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 
+local Buddy = require(script.Parent.Buddy)
 local Chaser = require(script.Parent.Chaser)
 local DebrisFX = require(script.Parent.DebrisFX)
 local InputController = require(script.Parent.InputController)
@@ -70,8 +71,6 @@ local function applyData(snapshot: any)
 		return
 	end
 	LobbyUI.SetData(snapshot)
-	LobbyFX.UpdateLoadout(snapshot.Loadout, snapshot.UnlockedSlots)
-	LobbyFX.UpdateCollection(snapshot.Collection)
 end
 
 -- ───────────────────────────── lobby → run ─────────────────────────────
@@ -96,6 +95,7 @@ Remotes.Event("RunPrepare").OnClientEvent:Connect(function(info)
 	RunHUD.Prepare(info)
 	Chaser.Start()
 	Chaser.PlayIntro()
+	Buddy.Start(info.buddy)
 	RunCamera.Start()
 	RunCamera.PlayIntro(Config.Run.IntroDuration, Chaser.Position)
 	playSound(Config.Sounds.Tung, 0.9)
@@ -156,6 +156,7 @@ local function backToLobby()
 	RunController.Stop()
 	RunCamera.Stop()
 	Chaser.Stop()
+	Buddy.Stop()
 	RunHUD.Hide()
 	setRunAtmosphere(false)
 	LobbyFX.SetEnabled(true)
@@ -179,6 +180,9 @@ end)
 -- ───────────────────────────── data / notifications ─────────────────────────────
 
 Remotes.Event("DataUpdated").OnClientEvent:Connect(applyData)
+Remotes.Event("CrateRevealed").OnClientEvent:Connect(function(reveal)
+	LobbyUI.Reveal(reveal)
+end)
 Remotes.Event("Notify").OnClientEvent:Connect(function(text: string, color: Color3?)
 	if inRun then
 		RunHUD.Flash(text, color)

@@ -685,24 +685,39 @@ define({
 	cooldown = 4,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(255, 150, 210), Enum.Material.SmoothPlastic)
-		local available = BrainrotData.AvailableAt(ctx.distance)
-		local brainrot = available[ctx.rng:NextInteger(1, math.max(1, #available))]
+		-- A Brainrot stands in one lane inside a glowing ring: run through it to
+		-- catch it. Caught Brainrots go to your base and earn coins.
+		local brainrot = BrainrotData.PickCatchable(ctx.distance, ctx.rng)
 		if brainrot then
-			local side = if ctx.rng:NextNumber() < 0.5 then -1 else 1
-			local plinth = scenery(ctx, { Name = "Plinth", Size = Vector3.new(16, 3, 16), CFrame = CF(ctx, side * 26, 1.5, ctx.length / 2), Color = Color3.fromRGB(255, 220, 90), Material = Enum.Material.Neon })
-			local model = ModelFactory.Brainrot(brainrot.id, 2.2)
-			model:PivotTo(CFrame.lookAt(plinth.Position + Vector3.new(0, 1.5, 0), plinth.Position + Vector3.new(-side * 10, 1.5, 0)))
-			model.Parent = ctx.folder
-			model:SetAttribute("Encounter", brainrot.id)
-			model:SetAttribute("EncounterD", ctx.startD + ctx.length / 2)
-			ModelFactory.NameTag(model, brainrot.icon .. " " .. string.upper(brainrot.name), Color3.fromRGB(255, 240, 120), 22)
+			local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
+			local d = ctx.length / 2
+			local ring = Util.Part({
+				Name = "BrainrotCatch",
+				Parent = ctx.folder:FindFirstChild("Pickups"),
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(0.4, 7.5, 7.5),
+				CFrame = CF(ctx, LANES[lane], 0.25, d) * CFrame.Angles(0, 0, math.rad(90)),
+				Color = BrainrotData.RarityColors[brainrot.rarity] or Color3.fromRGB(255, 220, 90),
+				Material = Enum.Material.Neon,
+				Transparency = 0.2,
+				CanCollide = false,
+				CanQuery = false,
+			})
+			ring:SetAttribute("Pickup", "Brainrot")
+			ring:SetAttribute("BrainrotId", brainrot.id)
+			local model = ModelFactory.Brainrot(brainrot.id, 1.1)
+			model:PivotTo(CF(ctx, LANES[lane], 0.4, d) * CFrame.Angles(0, math.pi, 0))
+			model.Parent = ring
+			ModelFactory.NameTag(model, ("%s %s — CATCH ME!"):format(brainrot.icon, string.upper(brainrot.name)), BrainrotData.RarityColors[brainrot.rarity], 11)
+			-- Keep its lane clear right around it.
+			coinLine(ctx, lane, d - 30, d - 8)
 		end
 		buildings(ctx, PALETTES.City, 30, 80, 20)
 		-- Gentle obstacles and a coin shower so the player can enjoy the view.
 		for _, lane in LANE_IDS do
-			coinLine(ctx, lane, EDGE, ctx.length - EDGE)
+			coinLine(ctx, lane, EDGE, ctx.length * 0.3)
 		end
-		obstacleRows(ctx, ctx.length * 0.6, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
+		obstacleRows(ctx, ctx.length * 0.68, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
 	end,
 })
 

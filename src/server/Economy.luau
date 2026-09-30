@@ -37,6 +37,27 @@ local function productIdFor(key: string?): number
 	return (Config.DeveloperProducts :: any)[key] or 0
 end
 
+-- Rolls and grants one item from a crate, returning the reveal the client
+-- animates.
+local function rollCrate(player: Player, crateId: string)
+	local profile = PlayerData.Get(player)
+	local item = CrateData.Roll(crateId, rng)
+	if not profile or not item then
+		return { ok = false, message = "Crate was empty?!" }
+	end
+	local isNew = (profile.Inventory[item.id] or 0) == 0
+	PlayerData.GrantItem(player, item.id)
+	return {
+		ok = true,
+		crateId = crateId,
+		itemId = item.id,
+		isNew = isNew,
+		level = EquipmentData.LevelFromCount(profile.Inventory[item.id]),
+	}
+end
+
+-- Coins: buy AND open on the spot. Robux: prompts the purchase; the crate
+-- opens as soon as the receipt is processed (CrateRevealed).
 local function buyCrate(player: Player, crateId: any, currency: any)
 	if type(crateId) ~= "string" then
 		return { ok = false, message = "Unknown crate" }
@@ -60,32 +81,20 @@ local function buyCrate(player: Player, crateId: any, currency: any)
 		return { ok = false, message = "Not enough coins!" }
 	end
 	profile.Coins -= crate.coinPrice
-	PlayerData.GrantCrate(player, crate.id)
-	notify(player, ("📦 Bought a %s!"):format(crate.name), crate.color)
-	return { ok = true }
+	return rollCrate(player, crate.id)
 end
 
+-- Opens a crate the player already owns (daily rewards, run vaults).
 local function openCrate(player: Player, crateId: any)
 	if type(crateId) ~= "string" then
 		return { ok = false, message = "Unknown crate" }
 	end
 	local profile = PlayerData.Get(player)
 	if not profile or (profile.Crates[crateId] or 0) <= 0 then
-		return { ok = false, message = "You don't have that crate. Buy one first!" }
-	end
-	local item = CrateData.Roll(crateId, rng)
-	if not item then
-		return { ok = false, message = "Crate was empty?!" }
+		return { ok = false, message = "You don't have that crate." }
 	end
 	profile.Crates[crateId] -= 1
-	local isNew = (profile.Inventory[item.id] or 0) == 0
-	PlayerData.GrantItem(player, item.id)
-	return {
-		ok = true,
-		itemId = item.id,
-		isNew = isNew,
-		level = EquipmentData.LevelFromCount(profile.Inventory[item.id]),
-	}
+	return rollCrate(player, crateId)
 end
 
 local function equipItem(player: Player, slot: any, itemId: any)
@@ -150,6 +159,16 @@ local function claimDaily(player: Player)
 	return { ok = true, day = reward.day, itemId = grantedItem }
 end
 
+local function setBuddy(player: Player, brainrotId: any)
+	local profile = PlayerData.Get(player)
+	if not profile or type(brainrotId) ~= "string" or (profile.Brainrots[brainrotId] or 0) <= 0 then
+		return { ok = false, message = "You don't own that Brainrot yet!" }
+	end
+	profile.Buddy = brainrotId
+	PlayerData.Changed(player)
+	return { ok = true }
+end
+
 local function buyCoinPack(player: Player, key: any)
 	if type(key) ~= "string" or not COIN_PACKS[key] then
 		return { ok = false }
@@ -167,9 +186,11 @@ local function grantProduct(player: Player, productId: number): boolean
 	local products = Config.DeveloperProducts :: any
 	for _, crate in CrateData.Crates do
 		if crate.productKey and products[crate.productKey] == productId then
-			PlayerData.GrantCrate(player, crate.id)
-			notify(player, ("📦 %s added! Open it at the crate area."):format(crate.name), crate.color)
-			return true
+			local reveal = rollCrate(player, crate.id)
+			if reveal.ok then
+				Remotes.Event("CrateRevealed"):FireClient(player, reveal)
+			end
+			return reveal.ok
 		end
 	end
 	for key, amount in COIN_PACKS do
@@ -191,6 +212,7 @@ function Economy.Init()
 	Remotes.Function("EquipItem").OnServerInvoke = equipItem
 	Remotes.Function("ClaimDaily").OnServerInvoke = claimDaily
 	Remotes.Function("BuyCoinPack").OnServerInvoke = buyCoinPack
+	Remotes.Function("SetBuddy").OnServerInvoke = setBuddy
 
 	MarketplaceService.ProcessReceipt = function(receipt)
 		local player = Players:GetPlayerByUserId(receipt.PlayerId)
