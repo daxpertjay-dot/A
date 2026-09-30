@@ -56,6 +56,13 @@ type Run = {
 	revives: number,
 	crates: { [string]: number },
 	caughtBrainrots: { string },
+	headStart: number, -- meters the cannon will fire you (0 = none)
+	headStartSpun: boolean,
+	awaitingPurchase: boolean,
+	countdownStarted: boolean,
+	launchUntil: number,
+	landingD: number,
+	decisionDeadline: number,
 	perks: { [string]: number }, -- run buddy perk totals
 	buddy: string,
 	caughtClock: number,
@@ -176,6 +183,13 @@ function RunManager.StartRun(player: Player)
 		revives = 0,
 		crates = {},
 		caughtBrainrots = {},
+		headStart = 0,
+		headStartSpun = false,
+		awaitingPurchase = false,
+		countdownStarted = false,
+		launchUntil = 0,
+		landingD = START_D,
+		decisionDeadline = math.huge,
 		perks = perks,
 		buddy = profile.Buddy,
 		caughtClock = 0,
@@ -211,30 +225,113 @@ function RunManager.StartRun(player: Player)
 		-- group when its run controller takes over (it simulates the character).
 		currentCharacter:PivotTo(startCf)
 
+		-- Intro: Sahur shows up, then the player gets a few seconds in the
+		-- starting area to use the head start cannon before the countdown.
 		run.phase = "Intro"
-		local leadIn = Config.Run.IntroDuration + Config.Run.CountdownStep * 3 + 0.25
-		run.goClock = os.clock() + leadIn
-		-- Buddy perk: start shielded.
-		if perks.StartShield then
-			run.shieldUntil = run.goClock + perks.StartShield
-		end
 		Remotes.Event("RunPrepare"):FireClient(player, {
 			origin = origin,
 			startD = START_D,
 			loadout = loadoutForClient(run),
 			bankCoins = profile.Coins,
 			bestDistance = profile.Stats.BestDistance,
-			goServerTime = workspace:GetServerTimeNow() + leadIn,
 			trackFolder = run.track.folder,
 			buddy = run.buddy,
 			perks = perks,
+			decisionTime = Config.HeadStart.DecisionTime,
+			headStartPrice = Config.HeadStart.CoinPrice,
+			headStartRobux = Config.DeveloperProducts.HeadStart ~= 0,
 		})
-		task.delay(leadIn, function()
-			if runs[player] == run and run.phase == "Intro" then
-				run.phase = "Running"
+		-- Start anyway if the player never presses RUN (longer while a Robux
+		-- purchase prompt is open).
+		run.decisionDeadline = os.clock() + Config.Run.IntroDuration + Config.HeadStart.DecisionTime
+		task.spawn(function()
+			while runs[player] == run and not run.countdownStarted do
+				local deadline = run.decisionDeadline
+				if os.clock() > deadline and (not run.awaitingPurchase or os.clock() > deadline + 20) then
+					RunManager.BeginCountdown(player)
+					break
+				end
+				task.wait(0.25)
 			end
 		end)
 	end)
+end
+
+-- 3 → 2 → 1 → GO (or FIRE! when the cannon is loaded).
+function RunManager.BeginCountdown(player: Player)
+	local run = runs[player]
+	if not run or run.phase ~= "Intro" or run.countdownStarted then
+		return
+	end
+	run.countdownStarted = true
+	local leadIn = Config.Run.CountdownStep * 3 + 0.25
+	run.goClock = os.clock() + leadIn
+	if run.perks.StartShield then
+		run.shieldUntil = run.goClock + run.perks.StartShield
+	end
+	if run.headStart > 0 then
+		local flight = ImpactRules.LaunchProfile(run.headStart)
+		run.launchUntil = run.goClock + flight
+		run.landingD = START_D + run.headStart / Config.Run.MetersPerStud
+	end
+	Remotes.Event("RunGo"):FireClient(player, {
+		goServerTime = workspace:GetServerTimeNow() + leadIn,
+		headStart = run.headStart,
+	})
+	task.delay(leadIn, function()
+		if runs[player] == run and run.phase == "Intro" then
+			run.phase = "Running"
+		end
+	end)
+end
+
+-- Rolls the cannon and makes sure the track exists where you'll land.
+local function spinHeadStart(run: Run): { [string]: any }
+	local index = ImpactRules.RollHeadStart(Random.new())
+	local outcome = Config.HeadStart.Outcomes[index]
+	run.headStart = outcome.meters
+	run.headStartSpun = true
+	-- Give the reel time to finish before the countdown can start on its own.
+	run.decisionDeadline = math.max(run.decisionDeadline, os.clock() + Config.HeadStart.SpinTime + 2)
+	run.track:EnsureAhead(START_D + outcome.meters / Config.Run.MetersPerStud + Config.Run.GenerateWhenWithin)
+	return { ok = true, index = index, meters = outcome.meters }
+end
+
+local function onBuyHeadStart(player: Player, currency: any)
+	local run = runs[player]
+	local profile = PlayerData.Get(player)
+	if not run or not profile or run.phase ~= "Intro" or run.countdownStarted then
+		return { ok = false, message = "The cannon only works in the starting area!" }
+	end
+	if run.headStartSpun then
+		return { ok = false, message = "Already loaded!" }
+	end
+	if currency == "Robux" then
+		if Config.DeveloperProducts.HeadStart == 0 then
+			return { ok = false, message = "Robux purchases aren't set up yet" }
+		end
+		run.awaitingPurchase = true
+		game:GetService("MarketplaceService"):PromptProductPurchase(player, Config.DeveloperProducts.HeadStart)
+		return { ok = true, pending = true }
+	end
+	if profile.Coins < Config.HeadStart.CoinPrice then
+		return { ok = false, message = "Not enough coins!" }
+	end
+	profile.Coins -= Config.HeadStart.CoinPrice
+	PlayerData.Changed(player)
+	return spinHeadStart(run)
+end
+
+-- Robux purchase finished. Returns false if there's no run to use it in (the
+-- caller refunds it).
+function RunManager.GrantHeadStart(player: Player): boolean
+	local run = runs[player]
+	if not run or run.phase ~= "Intro" or run.countdownStarted or run.headStartSpun then
+		return false
+	end
+	run.awaitingPurchase = false
+	Remotes.Event("HeadStartResult"):FireClient(player, spinHeadStart(run))
+	return true
 end
 
 -- ───────────────────────────── per-frame ─────────────────────────────
@@ -252,6 +349,10 @@ local function updateRun(run: Run, dt: number)
 	local reported = trackDistanceOf(run, root.Position)
 	local maxSpeed = ImpactRules.SpeedAt(run.d * Config.Run.MetersPerStud) * math.max(1.6, run.boostMultiplier) * Config.Run.MaxSpeedTolerance
 	local allowed = run.d + maxSpeed * dt + 2
+	if os.clock() < run.launchUntil + 0.5 then
+		-- Mid cannon flight: anything up to the landing spot is legit.
+		allowed = math.max(allowed, run.landingD + 5)
+	end
 	run.d = math.clamp(reported, run.d - 20, allowed)
 	run.track:Update(run.d)
 end
@@ -339,8 +440,9 @@ local function onCollectCoin(player: Player, coin: any)
 	if not nearRunner(run, part.Position, tolerance) then
 		return
 	end
+	local baseValue = part:GetAttribute("Value") or Config.Economy.CoinValue
 	part:Destroy()
-	local value = Config.Economy.CoinValue * (if now < run.doublerUntil then 2 else 1) * (1 + (run.perks.CoinBonus or 0))
+	local value = baseValue * (if now < run.doublerUntil then 2 else 1) * (1 + (run.perks.CoinBonus or 0))
 	run.coins += value
 end
 
@@ -595,6 +697,10 @@ function RunManager.Init()
 	Remotes.Event("UseEquipment").OnServerEvent:Connect(onUseEquipment)
 	Remotes.Event("ReportCaught").OnServerEvent:Connect(onReportCaught)
 	Remotes.Event("ChooseRevive").OnServerEvent:Connect(onChooseRevive)
+	Remotes.Function("BuyHeadStart").OnServerInvoke = onBuyHeadStart
+	Remotes.Event("RunReady").OnServerEvent:Connect(function(player)
+		RunManager.BeginCountdown(player)
+	end)
 	Remotes.Event("LeaveResults").OnServerEvent:Connect(function(player)
 		local run = runs[player]
 		if run and run.phase == "Results" then

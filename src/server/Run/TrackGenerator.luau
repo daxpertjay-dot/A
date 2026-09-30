@@ -8,6 +8,7 @@
 local PhysicsService = game:GetService("PhysicsService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local BiomeData = require(Shared.BiomeData)
 local Config = require(Shared.Config)
 
 local Segments = require(script.Parent.Segments)
@@ -27,6 +28,7 @@ export type Track = typeof(setmetatable(
 		index: number,
 		lastUsed: { [string]: number },
 		lastName: string,
+		lastBiome: string,
 	},
 	TrackGenerator
 ))
@@ -73,6 +75,7 @@ function TrackGenerator.new(parent: Instance, origin: Vector3, seed: number): Tr
 		index = 0,
 		lastUsed = {},
 		lastName = "",
+		lastBiome = BiomeData.At(0).id,
 	}, TrackGenerator)
 
 	self:_buildStartArea()
@@ -106,34 +109,45 @@ function TrackGenerator._buildStartArea(self: Track)
 		rng = self.rng,
 		difficulty = 0,
 		distance = 0,
+		biome = BiomeData.At(0),
 	})
 	table.insert(self.segments, { model = model, startD = -60, endD = length, name = "StartArea", index = 0 })
 	self.generatedUntil = length
 end
 
--- Chooses the next segment: weighted random among definitions that are
--- unlocked at this distance, off cooldown and not an immediate repeat.
-function TrackGenerator._choose(self: Track, distance: number): Segments.SegmentDef
+local defsByName: { [string]: Segments.SegmentDef } = {}
+for _, def in Segments.Definitions do
+	defsByName[def.name] = def
+end
+
+-- Chooses the next segment: weighted by the current biome's segment table,
+-- skipping ones on cooldown and immediate repeats.
+function TrackGenerator._choose(self: Track, biome: BiomeData.Biome): Segments.SegmentDef
 	local candidates = {}
+	local weights = {}
 	local total = 0
-	for _, def in Segments.Definitions do
-		local last = self.lastUsed[def.name]
-		local offCooldown = last == nil or (self.index - last) > def.cooldown
-		local notRepeat = def.name ~= self.lastName or def.name == "Straight"
-		if distance >= def.minDistance and offCooldown and notRepeat then
-			table.insert(candidates, def)
-			total += def.weight
+	for name, weight in biome.segmentWeights do
+		local def = defsByName[name]
+		if def then
+			local last = self.lastUsed[def.name]
+			local offCooldown = last == nil or (self.index - last) > def.cooldown
+			local notRepeat = def.name ~= self.lastName or def.name == "Straight" or def.name == "Meadow"
+			if offCooldown and notRepeat then
+				table.insert(candidates, def)
+				table.insert(weights, weight)
+				total += weight
+			end
 		end
 	end
 	if #candidates == 0 then
-		return Segments.Definitions[1]
+		return defsByName.Straight
 	end
 	local roll = self.rng:NextNumber() * total
-	for _, def in candidates do
-		if roll < def.weight then
+	for i, def in candidates do
+		if roll < weights[i] then
 			return def
 		end
-		roll -= def.weight
+		roll -= weights[i]
 	end
 	return candidates[#candidates]
 end
@@ -142,8 +156,12 @@ function TrackGenerator._generateNext(self: Track)
 	self.index += 1
 	local startD = self.generatedUntil
 	local distance = startD * Config.Run.MetersPerStud
-	local def = self:_choose(distance)
+	local biome = BiomeData.At(distance)
+	-- Crossing into a new biome always starts with its gate.
+	local def = if biome.id ~= self.lastBiome then defsByName.BiomeGate else self:_choose(biome)
+	self.lastBiome = biome.id
 	local model = newSegmentModel(self.folder, def.name, self.index)
+	model:SetAttribute("Biome", biome.id)
 	def.build({
 		folder = model,
 		origin = self.origin,
@@ -152,11 +170,21 @@ function TrackGenerator._generateNext(self: Track)
 		rng = self.rng,
 		difficulty = math.clamp(distance / 4000, 0, 1),
 		distance = distance,
+		biome = biome,
 	})
 	table.insert(self.segments, { model = model, startD = startD, endD = startD + Config.Run.SegmentLength, name = def.name, index = self.index })
 	self.lastUsed[def.name] = self.index
 	self.lastName = def.name
 	self.generatedUntil = startD + Config.Run.SegmentLength
+end
+
+-- Makes sure the track exists up to `targetD` (used before a cannon launch).
+function TrackGenerator.EnsureAhead(self: Track, targetD: number)
+	local guard = 0
+	while self.generatedUntil < targetD and guard < 60 do
+		self:_generateNext()
+		guard += 1
+	end
 end
 
 -- Call every frame with the runner's current track distance (studs).

@@ -25,6 +25,7 @@ local COIN_PACKS = {
 
 -- Hooks the run system registers so Robux revives can resume a run.
 Economy.OnReviveProductPurchased = nil :: ((player: Player) -> boolean)?
+Economy.OnHeadStartPurchased = nil :: ((player: Player) -> boolean)?
 
 local function notify(player: Player, text: string, color: Color3?)
 	Remotes.Event("Notify"):FireClient(player, text, color)
@@ -202,6 +203,9 @@ local function grantProduct(player: Player, productId: number): boolean
 	end
 	if products.Revive == productId and Economy.OnReviveProductPurchased then
 		return Economy.OnReviveProductPurchased(player)
+	end
+	if products.HeadStart == productId and Economy.OnHeadStartPurchased then
+		return Economy.OnHeadStartPurchased(player)
 	end
 	return false
 end

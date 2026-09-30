@@ -27,7 +27,8 @@ local function step(dt: number)
 	-- Stay on whichever side of the runner has more room.
 	side = if state.lane > 0 then -1 elseif state.lane < 0 then 1 else side
 	x = Util.Lerp(x, runner.X + side * 4.5, Util.Damp(8, dt))
-	local groundY = state.origin.Y + math.max(0, state.groundY)
+	-- Rides along through cannon flights too.
+	local groundY = if state.launch then runner.Y else state.origin.Y + math.max(0, state.groundY)
 	local hop = math.abs(math.sin(os.clock() * 11)) * 1.2
 	m:PivotTo(CFrame.new(x, groundY + hop, runner.Z + 2.5))
 end

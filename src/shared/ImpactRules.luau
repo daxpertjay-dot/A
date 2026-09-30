@@ -59,4 +59,44 @@ function ImpactRules.SpeedAt(distance: number): number
 	return curve[#curve].speed
 end
 
+-- The jump's shape at a given forward speed. Coin arcs are generated from
+-- this so a jump always sweeps straight through them.
+export type JumpProfile = { apex: number, airTime: number, length: number, gravity: number }
+
+function ImpactRules.JumpProfile(speed: number, gravityScale: number?): JumpProfile
+	local gravity = Config.Run.Gravity * (gravityScale or 1)
+	local v = Config.Run.JumpVelocity
+	local airTime = 2 * v / gravity
+	return {
+		apex = v * v / (2 * gravity),
+		airTime = airTime,
+		length = speed * airTime,
+		gravity = gravity,
+	}
+end
+
+-- How long a head start cannon flight lasts, and how high it goes.
+function ImpactRules.LaunchProfile(meters: number): (number, number)
+	local duration = math.clamp(1.4 + meters / 500, 1.6, 4.6)
+	local height = math.clamp(30 + meters * 0.05, 35, 110)
+	return duration, height
+end
+
+-- Weighted cannon spin. Returns the outcome index.
+function ImpactRules.RollHeadStart(rng: Random): number
+	local outcomes = Config.HeadStart.Outcomes
+	local total = 0
+	for _, o in outcomes do
+		total += o.weight
+	end
+	local roll = rng:NextNumber() * total
+	for i, o in outcomes do
+		if roll < o.weight then
+			return i
+		end
+		roll -= o.weight
+	end
+	return #outcomes
+end
+
 return ImpactRules

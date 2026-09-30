@@ -40,8 +40,9 @@ local function chaseCFrame(dt: number): CFrame
 	-- Sideways: follow the lane smoothly.
 	camX = Util.Lerp(camX, runner.X, Util.Damp(CAM.LaneFollowSharpness, dt))
 	-- Vertical: follow the ground level (train roofs) and part of each jump.
-	local groundY = if state.grounded then runner.Y else camBaseY
-	camBaseY = Util.Lerp(camBaseY, groundY, Util.Damp(CAM.VerticalSharpness, dt))
+	local launched = state.move == "Launched"
+	local groundY = if state.grounded or launched then runner.Y else camBaseY
+	camBaseY = Util.Lerp(camBaseY, groundY, Util.Damp(if launched then 10 else CAM.VerticalSharpness, dt))
 	local jumpOffset = (runner.Y - camBaseY) * CAM.VerticalFollow
 
 	local position = Vector3.new(camX, camBaseY + CAM.Height + jumpOffset, runner.Z + CAM.Distance)

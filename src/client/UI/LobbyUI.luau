@@ -7,6 +7,7 @@ local ProximityPromptService = game:GetService("ProximityPromptService")
 local TweenService = game:GetService("TweenService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local BiomeData = require(Shared.BiomeData)
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local CrateData = require(Shared.CrateData)
@@ -321,6 +322,14 @@ end
 
 -- ───────────────────────────── collection ─────────────────────────────
 
+local function whereToFind(brainrotId: string): string
+	local names = {}
+	for _, biome in BiomeData.WhereToFind(brainrotId) do
+		table.insert(names, biome.icon .. " " .. biome.name)
+	end
+	return if #names > 0 then "Catch in: " .. table.concat(names, ", ") else "???"
+end
+
 -- Brainrots: what you own, what they earn on your base, and which one is
 -- your run buddy.
 local function buildBrainrots(content: Frame)
@@ -367,7 +376,7 @@ local function buildBrainrots(content: Frame)
 			end).Parent = card
 		else
 			UIKit.Label({
-				Text = if b.catchWeight > 0 then ("Catch it in runs after %dm"):format(b.minDistance) else "???",
+				Text = whereToFind(b.id),
 				Size = UDim2.new(1, -10, 0, 30),
 				Position = UDim2.fromOffset(5, 176),
 				TextColor3 = C.Muted,

@@ -84,6 +84,25 @@ Config.Run = {
 	PickupTolerance = 18,
 }
 
+-- ───────────────────────────── HEAD START CANNON ─────────────────────────────
+-- In the starting area a cannon can fire you down the track. Pay coins or
+-- Robux, spin the reel, and it decides how far you fly.
+Config.HeadStart = {
+	CoinPrice = 250,
+	ProductKey = "HeadStart", -- key into Config.DeveloperProducts
+	DecisionTime = 7, -- seconds to decide before the countdown starts on its own
+	SpinTime = 2.6, -- reel animation length
+	LandingInvulnerability = 2,
+	Outcomes = {
+		{ meters = 150, weight = 35, label = "150m" },
+		{ meters = 250, weight = 25, label = "250m" },
+		{ meters = 400, weight = 18, label = "400m" },
+		{ meters = 600, weight = 12, label = "600m" },
+		{ meters = 900, weight = 7, label = "900m" },
+		{ meters = 1500, weight = 3, label = "1500m!" },
+	},
+}
+
 -- ───────────────────────────── CHASE ─────────────────────────────
 -- "Gap" is how far (in seconds of running) Tung Tung Tung Sahur is behind you.
 Config.Chase = {
@@ -176,6 +195,7 @@ Config.DeveloperProducts = {
 	CoinPackSmall = 0,
 	CoinPackLarge = 0,
 	Revive = 0,
+	HeadStart = 0,
 }
 
 -- Optional audio. Put your own asset ids here ("rbxassetid://123").

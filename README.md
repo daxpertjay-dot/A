@@ -4,7 +4,9 @@ A Roblox endless runner with a blocky, tycoon-style lobby (in the spirit of Stea
 
 ```
 JOIN → YOUR BASE (Brainrots earn coins · collect pad · buddy · equipment)
-     → walk into YOUR RUN PORTAL → "RUN STARTING..." → Sahur intro → 3… 2… 1… RUN!
+     → walk into YOUR RUN PORTAL → "RUN STARTING..." → Sahur intro
+     → 🎯 HEAD START CANNON (optional spin) → 3… 2… 1… RUN! / FIRE!
+     → 🌿 Grasslands → 🏙️ Brainrot City → ❄️ Frozen Peaks → 🌋 Volcano → 🌌 Brainrot Void
      → dodge / smash / CATCH BRAINROTS → caught → REVIVE or END → REWARDS → back to your base
 ```
 
@@ -50,7 +52,8 @@ src/
 │   ├── Config.luau            ← all tuning: speeds, camera, chase, destruction, prices
 │   ├── EquipmentData.luau     equipment catalog (Shield, Magnet, Speed Boost, Bomb, Coin Doubler)
 │   ├── CrateData.luau         crate prices + drop odds
-│   ├── BrainrotData.luau      Brainrots: income, catch rarity, buddy perks
+│   ├── BrainrotData.luau      Brainrots: income, buddy perks
+│   ├── BiomeData.luau         run biomes: look, lighting, twists, segments, catchable Brainrots
 │   ├── DailyRewardData.luau   7-day reward track
 │   ├── ImpactRules.luau       what happens when you hit things (shared client/server)
 │   ├── ModelFactory.luau      primitive Brainrot models (swap for meshes later)
@@ -97,7 +100,7 @@ Each player is assigned one of 8 plots, and you spawn there. A plot has:
 - A **mini run lane** ending in your personal **🏃 START RUN portal**. Only the owner can use it.
 
 ### Brainrots
-- **Catch them in runs.** Brainrot Special sections put a Brainrot inside a glowing ring in one lane; run through it to catch it. Rarer ones appear less often and only further into a run.
+- **Catch them in runs.** Brainrot Special sections put a Brainrot inside a glowing ring in one lane; run through it to catch it. Each biome has its own Brainrots (see Biomes below), so the rare ones live deep in the run.
 - **Income.** They earn coins/sec on your base: Uncommon 3, Rare 8, Epic 20, Legendary 50.
 - **Run buddy.** Pick one in the Brainrots panel. It jogs beside you and grants its perk:
 
@@ -123,6 +126,30 @@ Each player is assigned one of 8 plots, and you spawn there. A plot has:
 - Movement states: `Running → Jumping → Falling → Running`, `Rolling → Running`, `Staggered`, `Caught`.
 - Speed follows `Config.Run.SpeedCurve` (45 → 48 → 52 → 58 → 70 studs/s at 0 / 500 / 1000 / 2000 / 5000 m).
 - Ground and obstacles are found with raycasts and box queries on dedicated collision groups (`RunGround`, `RunObstacle`). This lets the runner go up ramps, run across train roofs, and pass through scenery.
+
+### Biomes (`BiomeData`)
+The run is split into zones, Roll a Slime style. It gets stranger (and more rewarding) the further you go, and a gate announces each new biome.
+
+| Biome | Starts at | Coin value | Twist | Brainrots you can catch |
+|---|---|---|---|---|
+| 🌿 Grasslands | 0m | x1 | hay bales, fences, farm road | Chimpanzini, Patapim, Tralalero |
+| 🏙️ Brainrot City | 800m | x2 | traffic, trains, the full city set | Tralalero, Ballerina, Patapim, Bombardiro |
+| ❄️ Frozen Peaks | 1,800m | x3 | **slippery**: lane changes slide | Ballerina, Lirilì, Bombombini, Tralalero |
+| 🌋 Volcano | 3,000m | x5 | **lava pools**: jump them | Bombardiro, Bombombini, Cappuccino Assassino, Trippi Troppi |
+| 🌌 Brainrot Void | 4,500m | x8 | **low gravity**, floaty jumps | Cappuccino Assassino, Trippi Troppi, Lirilì, Bombardiro |
+
+Each biome sets its own road, ground, scenery, obstacle skins (ice walls, basalt, neon glass…), coin colour, segment mix and lighting (fog, ambient, time of day). The last biome goes on forever. To add a biome, add an entry to `src/shared/BiomeData.luau`.
+
+### Head start cannon
+- The cannon sits behind you in the starting area. After the Sahur intro you get about 7 seconds to spin it (🪙 250 or Robux) or press **RUN!**.
+- The spin is a slot-machine reel. The weighted outcomes are 150m, 250m, 400m, 600m, 900m, and a rare 1500m, all set in `Config.HeadStart`.
+- At the end of the countdown it's **FIRE!**: you're shot in a big tumbling arc down the track, the camera follows, and you land with 2s of invincibility.
+- The server builds the track up to the landing spot before you fire and accepts the flight in its distance checks.
+
+### Jumps and coin arcs
+- Coin arcs over jumpable obstacles are generated from the real jump physics: forward speed at that distance, jump power, and the biome's gravity.
+- Jumping at the start of an arc therefore always sweeps through every coin, even at high speed or in the Void's low gravity.
+- If you change `JumpVelocity` or `Gravity`, the coin arcs follow automatically.
 
 ### Chase
 The gap to Tung Tung Tung Sahur is measured in seconds.
@@ -164,7 +191,7 @@ Destructible objects carry `Health`, `Tier`, `ExplosionResistance`, `CollisionDa
 
 ## Things to set up
 
-- **Robux products**: create developer products and put their IDs in `Config.DeveloperProducts`. Robux buttons do nothing until then.
+- **Robux products**: create developer products and put their IDs in `Config.DeveloperProducts` (crates, coin packs, revive, **head start**). Robux buttons do nothing until then.
 - **Sounds**: add asset IDs to `Config.Sounds`. The game is silent until you do.
 - **Studs**: the lobby uses classic `Studs`/`Inlet` part surfaces. If your place doesn't show them, set `Config.Lobby.UseStuds = false` or swap in a stud texture.
 - **StreamingEnabled**: runs happen far from the lobby (X ≥ 6000). The server calls `RequestStreamAroundAsync` before teleporting, but if you see the track pop in, consider turning streaming off or raising the minimum streaming radius.

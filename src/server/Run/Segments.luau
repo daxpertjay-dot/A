@@ -12,8 +12,10 @@
 -- Scenery stays in Default so the runner's probes ignore it.
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local BiomeData = require(Shared.BiomeData)
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
+local ImpactRules = require(Shared.ImpactRules)
 local ModelFactory = require(Shared.ModelFactory)
 local Util = require(Shared.Util)
 
@@ -33,6 +35,7 @@ export type Ctx = {
 	rng: Random,
 	difficulty: number,
 	distance: number,
+	biome: BiomeData.Biome,
 	isFirst: boolean?,
 }
 
@@ -48,6 +51,7 @@ local OBSTACLE_TYPE: { [string]: string } = {
 	ConcreteWall = "Block",
 	Car = "Block",
 	TrainCar = "Block",
+	LavaPool = "Jump",
 }
 
 -- ───────────────────────────── helpers ─────────────────────────────
@@ -91,15 +95,28 @@ local function obstacleModel(ctx: Ctx, kind: string, lane: number): Model
 end
 
 -- Road slab, lane markings and kerbs.
+-- Road slab in the biome's style (City segments may pass their own look),
+-- plus biome ground on both sides so the world matches the zone.
 local function road(ctx: Ctx, color: Color3?, material: Enum.Material?)
 	local len = ctx.length
+	local biome = ctx.biome
+	local useOverride = biome.id == "City" and color ~= nil
 	ground(ctx, {
 		Name = "Road",
 		Size = Vector3.new(ROAD_WIDTH, 2, len),
 		CFrame = CF(ctx, 0, -1, len / 2),
-		Color = color or Color3.fromRGB(55, 55, 65),
-		Material = material or Enum.Material.Asphalt,
+		Color = if useOverride then color else biome.road.color,
+		Material = if useOverride then material or Enum.Material.Asphalt else biome.road.material,
 	})
+	for _, side in { -1, 1 } do
+		scenery(ctx, {
+			Name = "BiomeGround",
+			Size = Vector3.new(120, 2, len),
+			CFrame = CF(ctx, side * (ROAD_WIDTH / 2 + 60), -1.2, len / 2),
+			Color = biome.ground.color,
+			Material = biome.ground.material,
+		})
+	end
 	for _, x in { -4, 4 } do
 		for d = 4, len - 4, 12 do
 			scenery(ctx, { Name = "LaneLine", Size = Vector3.new(0.4, 0.05, 6), CFrame = CF(ctx, x, 0.03, d), Color = Color3.fromRGB(240, 240, 240), CanCollide = false })
@@ -151,6 +168,114 @@ local function buildings(ctx: Ctx, palette: { Color3 }, minH: number?, maxH: num
 	end
 end
 
+-- ── Biome scenery ──────────────────────────────────────────────
+
+local function blockTree(ctx: Ctx, x: number, d: number, leaves: Color3, snowy: boolean?)
+	local s = ctx.rng:NextNumber(0.9, 1.6)
+	scenery(ctx, { Name = "Trunk", Size = Vector3.new(2, 6, 2) * s, CFrame = CF(ctx, x, 3 * s, d), Color = Color3.fromRGB(120, 80, 45), Studs = true })
+	for i, size in { 9, 6.5, 4 } do
+		local layer = scenery(ctx, { Name = "Leaves", Size = Vector3.new(size, 3, size) * s, CFrame = CF(ctx, x, (4.5 + i * 2.6) * s, d), Color = leaves, Studs = true })
+		if snowy then
+			scenery(ctx, { Parent = layer, Name = "Snow", Size = Vector3.new(size * 0.9, 0.6, size * 0.9) * s, CFrame = layer.CFrame * CFrame.new(0, 1.7 * s, 0), Color = Color3.fromRGB(250, 252, 255), Material = Enum.Material.Snow })
+		end
+	end
+end
+
+local function grassScenery(ctx: Ctx)
+	local rng = ctx.rng
+	for _, side in { -1, 1 } do
+		-- Fence along the road
+		scenery(ctx, { Name = "FenceRail", Size = Vector3.new(0.5, 0.5, ctx.length), CFrame = CF(ctx, side * 16.5, 2.2, ctx.length / 2), Color = Color3.fromRGB(255, 255, 255) })
+		for d = 0, ctx.length, 10 do
+			scenery(ctx, { Name = "FencePost", Size = Vector3.new(0.8, 3, 0.8), CFrame = CF(ctx, side * 16.5, 1.5, d), Color = Color3.fromRGB(255, 255, 255) })
+		end
+		for _ = 1, 5 do
+			blockTree(ctx, side * rng:NextNumber(22, 70), rng:NextNumber(0, ctx.length), Color3.fromRGB(70, rng:NextInteger(160, 200), 60))
+		end
+		-- Rolling blocky hills
+		local h = rng:NextNumber(8, 22)
+		scenery(ctx, { Name = "Hill", Size = Vector3.new(40, h, 50), CFrame = CF(ctx, side * rng:NextNumber(70, 95), h / 2 - 1, rng:NextNumber(0, ctx.length)), Color = Color3.fromRGB(85, 175, 65), Material = Enum.Material.Grass, Studs = true })
+		for _ = 1, 4 do
+			scenery(ctx, { Name = "Flower", Size = Vector3.new(1, 1, 1), CFrame = CF(ctx, side * rng:NextNumber(18, 30), 0.4, rng:NextNumber(0, ctx.length)), Color = Color3.fromHSV(rng:NextNumber(), 0.7, 1) })
+		end
+	end
+end
+
+local function iceScenery(ctx: Ctx)
+	local rng = ctx.rng
+	for _, side in { -1, 1 } do
+		scenery(ctx, { Name = "SnowBank", Size = Vector3.new(4, 2.5, ctx.length), CFrame = CF(ctx, side * 17, 1, ctx.length / 2), Color = Color3.fromRGB(245, 250, 255), Material = Enum.Material.Snow })
+		for _ = 1, 4 do
+			blockTree(ctx, side * rng:NextNumber(22, 65), rng:NextNumber(0, ctx.length), Color3.fromRGB(40, 110, 70), true)
+		end
+		for _ = 1, 3 do
+			local h = rng:NextNumber(10, 30)
+			scenery(ctx, { Name = "IceSpike", Class = "WedgePart", Size = Vector3.new(4, h, 6), CFrame = CF(ctx, side * rng:NextNumber(24, 60), h / 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), Color = Color3.fromRGB(150, 220, 255), Material = Enum.Material.Glacier, Transparency = 0.15 })
+		end
+		local mountain = rng:NextNumber(40, 80)
+		scenery(ctx, { Name = "Mountain", Class = "WedgePart", Size = Vector3.new(60, mountain, 60), CFrame = CF(ctx, side * 110, mountain / 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, if side > 0 then -math.pi / 2 else math.pi / 2, 0), Color = Color3.fromRGB(235, 240, 250), Material = Enum.Material.Snow })
+	end
+end
+
+local function volcanoScenery(ctx: Ctx)
+	local rng = ctx.rng
+	for _, side in { -1, 1 } do
+		-- Lava rivers running beside the road
+		scenery(ctx, { Name = "LavaRiver", Size = Vector3.new(10, 0.4, ctx.length), CFrame = CF(ctx, side * 22, -0.1, ctx.length / 2), Color = Color3.fromRGB(255, 100, 20), Material = Enum.Material.Neon, CanCollide = false })
+		for _ = 1, 5 do
+			local size = rng:NextNumber(4, 12)
+			scenery(ctx, { Name = "Basalt", Size = Vector3.new(size, size * rng:NextNumber(0.6, 2), size), CFrame = CF(ctx, side * rng:NextNumber(30, 70), size / 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), Color = Color3.fromRGB(45, 35, 35), Material = Enum.Material.Basalt, Studs = true })
+		end
+		if rng:NextNumber() < 0.5 then
+			-- Distant volcano: stacked shrinking blocks with a glowing top
+			local base = CF(ctx, side * 120, 0, rng:NextNumber(0, ctx.length))
+			for i = 0, 4 do
+				local w = 70 - i * 13
+				scenery(ctx, { Name = "Volcano", Size = Vector3.new(w, 12, w), CFrame = base * CFrame.new(0, 6 + i * 12, 0), Color = Color3.fromRGB(60, 40, 35), Material = Enum.Material.Basalt, Studs = true })
+			end
+			scenery(ctx, { Name = "Crater", Size = Vector3.new(12, 2, 12), CFrame = base * CFrame.new(0, 61, 0), Color = Color3.fromRGB(255, 120, 30), Material = Enum.Material.Neon })
+		end
+	end
+end
+
+local function voidScenery(ctx: Ctx)
+	local rng = ctx.rng
+	for _, side in { -1, 1 } do
+		scenery(ctx, { Name = "NeonEdge", Size = Vector3.new(0.6, 0.6, ctx.length), CFrame = CF(ctx, side * 15.2, 0.3, ctx.length / 2), Color = Color3.fromRGB(255, 100, 255), Material = Enum.Material.Neon })
+		for _ = 1, 6 do
+			local size = rng:NextNumber(3, 10)
+			scenery(ctx, {
+				Name = "FloatingCube",
+				Size = Vector3.one * size,
+				CFrame = CF(ctx, side * rng:NextNumber(22, 80), rng:NextNumber(5, 50), rng:NextNumber(0, ctx.length)) * CFrame.Angles(rng:NextNumber(0, 6), rng:NextNumber(0, 6), 0),
+				Color = Color3.fromHSV(rng:NextNumber(0.7, 0.95), 0.7, 1),
+				Material = Enum.Material.Neon,
+				CanCollide = false,
+			})
+		end
+		for _ = 1, 3 do
+			local h = rng:NextNumber(8, 25)
+			scenery(ctx, { Name = "Crystal", Size = Vector3.new(3, h, 3), CFrame = CF(ctx, side * rng:NextNumber(20, 50), h / 2 - 2, rng:NextNumber(0, ctx.length)) * CFrame.Angles(0, 0.5, math.rad(rng:NextNumber(-15, 15))), Color = Color3.fromRGB(120, 255, 240), Material = Enum.Material.Glass, Transparency = 0.2 })
+		end
+	end
+end
+
+-- Scenery for the current biome (City uses buildings with an optional palette).
+local function sideScenery(ctx: Ctx, cityPalette: { Color3 }?, minH: number?, maxH: number?)
+	local id = ctx.biome.id
+	if id == "Grasslands" then
+		grassScenery(ctx)
+	elseif id == "Ice" then
+		iceScenery(ctx)
+	elseif id == "Volcano" then
+		volcanoScenery(ctx)
+	elseif id == "Void" then
+		voidScenery(ctx)
+	else
+		buildings(ctx, cityPalette or PALETTES.City, minH, maxH)
+	end
+end
+
 local function coin(ctx: Ctx, lane: number, y: number, d: number)
 	local c = Util.Part({
 		Name = "Coin",
@@ -158,13 +283,14 @@ local function coin(ctx: Ctx, lane: number, y: number, d: number)
 		Shape = Enum.PartType.Cylinder,
 		Size = Vector3.new(0.4, 2.2, 2.2),
 		CFrame = CF(ctx, LANES[lane], y + 1.6, d) * CFrame.Angles(0, math.rad(90), 0),
-		Color = Color3.fromRGB(255, 200, 40),
+		Color = ctx.biome.coinColor,
 		Material = Enum.Material.Neon,
 		CanCollide = false,
 		CanQuery = false,
 		CastShadow = false,
 	})
 	c:SetAttribute("Coin", true)
+	c:SetAttribute("Value", ctx.biome.coinValue)
 end
 
 local function coinLine(ctx: Ctx, lane: number, d0: number, d1: number, y: number?)
@@ -175,11 +301,17 @@ local function coinLine(ctx: Ctx, lane: number, d0: number, d1: number, y: numbe
 	end
 end
 
--- Coins in a jump arc over a low obstacle at d.
+-- Coins along the exact jump arc over a low obstacle at d: built from the
+-- runner's jump physics (speed here, gravity in this biome), so jumping at
+-- the obstacle sweeps straight through every coin.
 local function coinArc(ctx: Ctx, lane: number, d: number)
-	for i = -3, 3 do
-		local t = i / 3
-		coin(ctx, lane, 7.5 * (1 - t * t), d + i * 4)
+	local meters = (ctx.startD + d) * Config.Run.MetersPerStud
+	local profile = ImpactRules.JumpProfile(ImpactRules.SpeedAt(meters), ctx.biome.gravityScale)
+	local count = math.clamp(math.floor(profile.length / 5), 5, 11)
+	for i = 0, count - 1 do
+		local t = i / (count - 1) -- 0..1 across the jump
+		local height = 4 * profile.apex * t * (1 - t)
+		coin(ctx, lane, height, d - profile.length / 2 + t * profile.length)
 	end
 end
 
@@ -329,6 +461,23 @@ builders.TrainCar = function(ctx, lane, d)
 	return m
 end
 
+-- A pool of lava across one lane: jump it! (Touching it is a bump.)
+builders.LavaPool = function(ctx, lane, d)
+	local m = obstacleModel(ctx, "LavaPool", lane)
+	local x = LANES[lane]
+	solid(m, { Name = "Lava", Size = Vector3.new(7.4, 1.2, 8), CFrame = CF(ctx, x, 0.6, d), Color = Color3.fromRGB(255, 110, 20), Material = Enum.Material.Neon })
+	for _, dz in { -4.3, 4.3 } do
+		scenery(ctx, { Parent = m, Name = "Crust", Size = Vector3.new(7.6, 1.4, 0.6), CFrame = CF(ctx, x, 0.7, d + dz), Color = Color3.fromRGB(40, 30, 30), Material = Enum.Material.Basalt, CanCollide = false })
+	end
+	local glow = Instance.new("PointLight")
+	glow.Color = Color3.fromRGB(255, 120, 40)
+	glow.Range = 14
+	glow.Brightness = 2
+	glow.Parent = m:FindFirstChild("Lava")
+	Destruction.Setup(m, 4)
+	return m
+end
+
 local function ramp(ctx: Ctx, lane: number, d: number, length: number)
 	local r = ground(ctx, {
 		Class = "WedgePart",
@@ -343,8 +492,23 @@ local function ramp(ctx: Ctx, lane: number, d: number, length: number)
 	return r
 end
 
+-- Parts that keep their own colours when a biome reskins an obstacle.
+local KEEP_COLOR = { Stripe = true, Front = true, Wheel = true, Cabin = true, Roof = true, Lava = true }
+
 function Segments.Obstacle(ctx: Ctx, kind: string, lane: number, d: number): Model
-	return builders[kind](ctx, lane, d)
+	local model = builders[kind](ctx, lane, d)
+	local skin = ctx.biome.recolor[kind]
+	if skin then
+		for _, p in model:GetDescendants() do
+			if p:IsA("BasePart") and not KEEP_COLOR[p.Name] then
+				local shade = 0.9 + ctx.rng:NextNumber() * 0.15
+				p.Color = Color3.new(math.min(1, skin.color.R * shade), math.min(1, skin.color.G * shade), math.min(1, skin.color.B * shade))
+				p.Material = skin.material
+			end
+		end
+		model:SetAttribute("Material", skin.material.Name)
+	end
+	return model
 end
 
 -- ───────────────────────────── row generation ─────────────────────────────
@@ -412,7 +576,7 @@ local function obstacleRows(ctx: Ctx, d0: number, d1: number, kinds: { [string]:
 			local kind = row[lane]
 			if kind then
 				Segments.Obstacle(ctx, kind, lane, d)
-				if kind == "Barricade" or kind == "SteelBarrier" then
+				if kind == "Barricade" or kind == "SteelBarrier" or kind == "LavaPool" then
 					if lane == coinLane then
 						coinArc(ctx, lane, d)
 					end
@@ -437,10 +601,10 @@ local EDGE = Config.Run.SafeZoneAtSegmentEdges
 
 -- ───────────────────────────── segment types ─────────────────────────────
 
+-- Which segments appear (and how often) is decided per biome by
+-- BiomeData.segmentWeights.
 export type SegmentDef = {
 	name: string,
-	weight: number,
-	minDistance: number,
 	cooldown: number, -- segments that must pass before this can repeat
 	build: (ctx: Ctx) -> (),
 }
@@ -453,21 +617,21 @@ end
 
 define({
 	name = "Straight",
-	weight = 10,
-	minDistance = 0,
 	cooldown = 0,
 	build = function(ctx)
 		road(ctx)
-		buildings(ctx, PALETTES.City)
-		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { Barricade = 3, OverheadSign = 3, Crates = 2, SteelBarrier = 1, WoodWall = 1 })
+		sideScenery(ctx)
+		local kinds = { Barricade = 3, OverheadSign = 3, Crates = 2, SteelBarrier = 1, WoodWall = 1 }
+		if ctx.biome.id == "Volcano" then
+			kinds.LavaPool = 3
+		end
+		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, kinds)
 		maybeEquipmentPickup(ctx, 0.2)
 	end,
 })
 
 define({
 	name = "Intersection",
-	weight = 6,
-	minDistance = 0,
 	cooldown = 1,
 	build = function(ctx)
 		road(ctx)
@@ -494,8 +658,6 @@ define({
 
 define({
 	name = "Alley",
-	weight = 5,
-	minDistance = 100,
 	cooldown = 1,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(45, 42, 50), Enum.Material.Cobblestone)
@@ -512,8 +674,6 @@ define({
 
 define({
 	name = "Construction",
-	weight = 5,
-	minDistance = 150,
 	cooldown = 2,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(110, 90, 70), Enum.Material.Ground)
@@ -533,8 +693,6 @@ define({
 
 define({
 	name = "ParkingLot",
-	weight = 4,
-	minDistance = 100,
 	cooldown = 2,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(70, 70, 78))
@@ -554,18 +712,18 @@ define({
 
 define({
 	name = "Tunnel",
-	weight = 5,
-	minDistance = 200,
 	cooldown = 2,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(50, 45, 55), Enum.Material.Concrete)
 		for _, side in { -1, 1 } do
-			scenery(ctx, { Name = "TunnelWall", Size = Vector3.new(3, 22, ctx.length), CFrame = CF(ctx, side * 15.5, 11, ctx.length / 2), Color = Color3.fromRGB(90, 90, 100), Material = Enum.Material.Concrete })
+			local ice = ctx.biome.id == "Ice"
+			scenery(ctx, { Name = "TunnelWall", Size = Vector3.new(3, 22, ctx.length), CFrame = CF(ctx, side * 15.5, 11, ctx.length / 2), Color = if ice then Color3.fromRGB(150, 210, 245) else Color3.fromRGB(90, 90, 100), Material = if ice then Enum.Material.Glacier else Enum.Material.Concrete })
 			for d = 5, ctx.length - 5, 15 do
 				scenery(ctx, { Name = "TunnelLight", Size = Vector3.new(0.3, 1, 5), CFrame = CF(ctx, side * 13.9, 16, d), Color = Color3.fromRGB(200, 255, 255), Material = Enum.Material.Neon, CanCollide = false })
 			end
 		end
-		scenery(ctx, { Name = "TunnelRoof", Size = Vector3.new(34, 2, ctx.length), CFrame = CF(ctx, 0, 23, ctx.length / 2), Color = Color3.fromRGB(70, 70, 80), Material = Enum.Material.Concrete })
+		local iceRoof = ctx.biome.id == "Ice"
+		scenery(ctx, { Name = "TunnelRoof", Size = Vector3.new(34, 2, ctx.length), CFrame = CF(ctx, 0, 23, ctx.length / 2), Color = if iceRoof then Color3.fromRGB(170, 225, 250) else Color3.fromRGB(70, 70, 80), Material = if iceRoof then Enum.Material.Ice else Enum.Material.Concrete })
 		-- Occasionally a parked train with a ramp in one lane.
 		local skip = {}
 		if ctx.rng:NextNumber() < 0.5 then
@@ -581,14 +739,12 @@ define({
 
 define({
 	name = "Highway",
-	weight = 5,
-	minDistance = 300,
 	cooldown = 1,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(45, 45, 52))
 		for _, side in { -1, 1 } do
 			scenery(ctx, { Name = "GuardRail", Size = Vector3.new(0.6, 2.4, ctx.length), CFrame = CF(ctx, side * 13.5, 1.2, ctx.length / 2), Color = Color3.fromRGB(190, 190, 200), Material = Enum.Material.Metal })
-			scenery(ctx, { Name = "Drop", Size = Vector3.new(80, 2, ctx.length), CFrame = CF(ctx, side * 56, -30, ctx.length / 2), Color = Color3.fromRGB(90, 160, 90), Material = Enum.Material.Grass })
+			scenery(ctx, { Name = "Drop", Size = Vector3.new(80, 2, ctx.length), CFrame = CF(ctx, side * 56, -30, ctx.length / 2), Color = ctx.biome.ground.color, Material = ctx.biome.ground.material })
 		end
 		-- Overhead gantry sign
 		local gantry = scenery(ctx, { Name = "Gantry", Size = Vector3.new(32, 5, 1), CFrame = CF(ctx, 0, 20, ctx.length / 2), Color = Color3.fromRGB(30, 120, 60) })
@@ -600,8 +756,6 @@ define({
 
 define({
 	name = "Building",
-	weight = 4,
-	minDistance = 250,
 	cooldown = 2,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(180, 170, 160), Enum.Material.Marble)
@@ -620,12 +774,10 @@ define({
 
 define({
 	name = "Ramp",
-	weight = 5,
-	minDistance = 120,
 	cooldown = 2,
 	build = function(ctx)
 		road(ctx)
-		buildings(ctx, PALETTES.City)
+		sideScenery(ctx)
 		-- Two or three train cars; one has a ramp so you can run on the roofs.
 		local rampLane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
 		ramp(ctx, rampLane, EDGE, 26)
@@ -647,12 +799,10 @@ define({
 -- Blow it up or smash through it and the sealed lane is full of loot.
 define({
 	name = "Destruction",
-	weight = 4,
-	minDistance = 200,
 	cooldown = 3,
 	build = function(ctx)
 		road(ctx)
-		buildings(ctx, PALETTES.Industrial, 15, 40)
+		sideScenery(ctx, PALETTES.Industrial, 15, 40)
 		local vaultStart = EDGE + 20
 		local vaultEnd = ctx.length - EDGE - 6
 		local entrance = Segments.Obstacle(ctx, if ctx.rng:NextNumber() < 0.5 then "ConcreteWall" else "WoodWall", 0, vaultStart)
@@ -680,14 +830,13 @@ define({
 
 define({
 	name = "BrainrotSpecial",
-	weight = 3,
-	minDistance = 150,
 	cooldown = 4,
 	build = function(ctx)
 		road(ctx, Color3.fromRGB(255, 150, 210), Enum.Material.SmoothPlastic)
 		-- A Brainrot stands in one lane inside a glowing ring: run through it to
 		-- catch it. Caught Brainrots go to your base and earn coins.
-		local brainrot = BrainrotData.PickCatchable(ctx.distance, ctx.rng)
+		local brainrotId = BiomeData.PickBrainrot(ctx.biome, ctx.rng)
+		local brainrot = if brainrotId then BrainrotData.Get(brainrotId) else nil
 		if brainrot then
 			local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
 			local d = ctx.length / 2
@@ -712,12 +861,77 @@ define({
 			-- Keep its lane clear right around it.
 			coinLine(ctx, lane, d - 30, d - 8)
 		end
-		buildings(ctx, PALETTES.City, 30, 80, 20)
+		sideScenery(ctx, PALETTES.City, 30, 80)
 		-- Gentle obstacles and a coin shower so the player can enjoy the view.
 		for _, lane in LANE_IDS do
 			coinLine(ctx, lane, EDGE, ctx.length * 0.3)
 		end
 		obstacleRows(ctx, ctx.length * 0.68, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
+	end,
+})
+
+-- 🌿 Farm road: hay bales, fences and the odd tractor.
+define({
+	name = "Meadow",
+	cooldown = 0,
+	build = function(ctx)
+		road(ctx)
+		sideScenery(ctx)
+		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { Barricade = 4, Crates = 3, OverheadSign = 1, Car = 1, WoodWall = 1 })
+		maybeEquipmentPickup(ctx, 0.25)
+	end,
+})
+
+-- ❄️ A long slippery slide: fewer obstacles, zig-zag coin trail to chase.
+define({
+	name = "IceSlide",
+	cooldown = 1,
+	build = function(ctx)
+		road(ctx)
+		sideScenery(ctx)
+		local zigzag = { -1, 0, 1, 0 }
+		for d = EDGE, ctx.length - EDGE, 5 do
+			coin(ctx, zigzag[(d // 25) % 4 + 1], 0, d)
+		end
+		obstacleRows(ctx, EDGE + 30, ctx.length - EDGE, { SteelBarrier = 2, Barricade = 2, Crates = 1 })
+		-- A snowman for good measure
+		local side = if ctx.rng:NextNumber() < 0.5 then -1 else 1
+		for i, size in { 6, 4.5, 3 } do
+			scenery(ctx, { Name = "Snowman", Shape = Enum.PartType.Ball, Size = Vector3.one * size, CFrame = CF(ctx, side * 21, ({ 3, 7.5, 11 })[i], ctx.length / 2), Color = Color3.fromRGB(250, 252, 255), Material = Enum.Material.Snow })
+		end
+	end,
+})
+
+-- 🌋 Lava pools across the lanes: jump, jump, jump.
+define({
+	name = "LavaRiver",
+	cooldown = 1,
+	build = function(ctx)
+		road(ctx)
+		sideScenery(ctx)
+		obstacleRows(ctx, EDGE + 10, ctx.length - EDGE, { LavaPool = 6, Barricade = 1, WoodWall = 1, SteelBarrier = 1 })
+		maybeEquipmentPickup(ctx, 0.3)
+	end,
+})
+
+-- Placed automatically when you cross into a new biome: a big gate, a coin
+-- shower and no obstacles, so the new zone gets a moment to show off.
+define({
+	name = "BiomeGate",
+	cooldown = 0,
+	build = function(ctx)
+		road(ctx)
+		sideScenery(ctx)
+		local biome = ctx.biome
+		for _, sx in { -16, 16 } do
+			scenery(ctx, { Name = "GatePillar", Size = Vector3.new(4, 26, 4), CFrame = CF(ctx, sx, 13, 30), Color = biome.coinColor, Material = Enum.Material.Neon })
+		end
+		local arch = scenery(ctx, { Name = "GateArch", Size = Vector3.new(36, 7, 3), CFrame = CF(ctx, 0, 27, 30), Color = biome.ground.color, Material = biome.ground.material })
+		Util.SurfaceLabel(arch, Enum.NormalId.Back, ("%s %s"):format(biome.icon, string.upper(biome.name)), { PixelsPerStud = 12, TextColor = biome.coinColor })
+		for _, lane in LANE_IDS do
+			coinLine(ctx, lane, 40, ctx.length - EDGE)
+		end
+		ctx.folder:SetAttribute("BiomeGate", biome.id)
 	end,
 })
 
@@ -728,8 +942,8 @@ Segments.Definitions = defs
 function Segments.BuildStartArea(ctx: Ctx)
 	road(ctx)
 	-- Extend the road behind the start line for the tunnel mouth.
-	ground(ctx, { Name = "RoadBehind", Size = Vector3.new(ROAD_WIDTH, 2, 60), CFrame = CF(ctx, 0, -1, -30), Color = Color3.fromRGB(55, 55, 65), Material = Enum.Material.Asphalt })
-	buildings(ctx, PALETTES.City, 30, 70)
+	ground(ctx, { Name = "RoadBehind", Size = Vector3.new(ROAD_WIDTH, 2, 60), CFrame = CF(ctx, 0, -1, -30), Color = ctx.biome.road.color, Material = ctx.biome.road.material })
+	sideScenery(ctx)
 
 	-- The tunnel the player just came out of
 	for _, side in { -1, 1 } do
@@ -746,6 +960,27 @@ function Segments.BuildStartArea(ctx: Ctx)
 	for _, side in { -1, 1 } do
 		scenery(ctx, { Name = "BannerPost", Size = Vector3.new(1, 21, 1), CFrame = CF(ctx, side * 15, 10.5, 30), Color = Color3.fromRGB(60, 60, 70) })
 	end
+	-- The head start cannon, right behind the player.
+	local cannon = Instance.new("Model")
+	cannon.Name = "HeadStartCannon"
+	cannon.Parent = ctx.folder
+	scenery(ctx, { Parent = cannon, Name = "CannonBase", Size = Vector3.new(6, 3, 7), CFrame = CF(ctx, 0, 1.5, -4), Color = Color3.fromRGB(120, 80, 45), Material = Enum.Material.WoodPlanks, Studs = true, CanCollide = false })
+	for _, side in { -1, 1 } do
+		scenery(ctx, { Parent = cannon, Name = "Wheel", Shape = Enum.PartType.Cylinder, Size = Vector3.new(1, 5, 5), CFrame = CF(ctx, side * 3.5, 2.5, -4), Color = Color3.fromRGB(70, 50, 30), CanCollide = false })
+	end
+	local barrel = scenery(ctx, {
+		Parent = cannon,
+		Name = "Barrel",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(9, 3.4, 3.4),
+		CFrame = CF(ctx, 0, 5, -3) * CFrame.Angles(math.rad(28), 0, 0) * CFrame.Angles(0, math.rad(90), 0),
+		Color = Color3.fromRGB(45, 45, 55),
+		Material = Enum.Material.Metal,
+		CanCollide = false,
+	})
+	local muzzle = scenery(ctx, { Parent = cannon, Name = "Muzzle", Size = Vector3.new(0.5, 0.5, 0.5), CFrame = barrel.CFrame * CFrame.new(4.6, 0, 0), Transparency = 1, CanCollide = false })
+	Util.Billboard(muzzle, "🎯 HEAD START CANNON", UDim2.fromOffset(240, 40), Vector3.new(0, 4, 0), Color3.fromRGB(255, 220, 90))
+
 	-- A few warm-up coins down the middle.
 	coinLine(ctx, 0, 40, ctx.length - 8)
 end

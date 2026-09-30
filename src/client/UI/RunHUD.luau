@@ -191,11 +191,11 @@ function RunHUD.Prepare(info: any)
 	updateConnection = RunService.RenderStepped:Connect(update)
 end
 
--- Runs the intro caption and 3 → 2 → 1 → RUN! against the server's go time.
-function RunHUD.Countdown(goClock: number, onGo: () -> ())
+-- 3 → 2 → 1 → RUN! (or FIRE! when the cannon is loaded) against the server's go time.
+function RunHUD.Countdown(goClock: number, headStart: number, onGo: () -> ())
+	RunHUD.HideCannon()
 	task.spawn(function()
 		local step = Config.Run.CountdownStep
-		RunHUD.Big("🪵 TUNG TUNG TUNG SAHUR 🪵", Color3.fromRGB(255, 200, 120), Config.Run.IntroDuration - 0.2)
 		for i = 3, 1, -1 do
 			local at = goClock - step * i
 			local wait = at - os.clock()
@@ -209,9 +209,138 @@ function RunHUD.Countdown(goClock: number, onGo: () -> ())
 			task.wait(wait)
 		end
 		prepCard.Visible = false
-		RunHUD.Big("RUN!", C.Good, 0.8)
+		if headStart > 0 then
+			RunHUD.Big(("💥 FIRE! +%sm"):format(Util.FormatNumber(headStart)), Color3.fromRGB(255, 140, 40), 1.2)
+		else
+			RunHUD.Big("RUN!", C.Good, 0.8)
+		end
 		onGo()
 	end)
+end
+
+-- ───────────────────────────── head start cannon ─────────────────────────────
+
+local cannonPanel: Frame
+local reelStrip: Frame
+local cannonStatus: TextLabel
+local cannonButtons: Frame
+local cannonDeadline = 0
+local cannonSpinning = false
+local REEL_CELL = 96
+local REEL_REPEATS = 7
+
+local function buildReel(parent: Instance)
+	local window = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(20, 15, 35), ClipsDescendants = true, Size = UDim2.new(1, 0, 0, 74), Parent = parent })
+	UIKit.Corner(12).Parent = window
+	UIKit.Stroke(3, C.Gold).Parent = window
+	reelStrip = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(REEL_CELL * #Config.HeadStart.Outcomes * REEL_REPEATS, 74), Parent = window })
+	for rep = 0, REEL_REPEATS - 1 do
+		for i, outcome in Config.HeadStart.Outcomes do
+			local cell = UIKit.New("Frame", {
+				BackgroundColor3 = Color3.fromHSV(0.12 - (i - 1) * 0.02, 0.4 + i * 0.1, 0.9),
+				Position = UDim2.fromOffset((rep * #Config.HeadStart.Outcomes + i - 1) * REEL_CELL + 4, 6),
+				Size = UDim2.fromOffset(REEL_CELL - 8, 62),
+				Parent = reelStrip,
+			})
+			UIKit.Corner(10).Parent = cell
+			UIKit.Label({ Text = "🎯\n" .. outcome.label, Size = UDim2.fromScale(1, 1), Parent = cell })
+		end
+	end
+	-- Centre marker
+	UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = C.Bad, ZIndex = 3, Parent = window })
+end
+
+-- Starting area: offer the cannon. `onReady` tells the server to start the countdown.
+function RunHUD.ShowCannon(info: any, onSpin: (currency: string) -> (), onReady: () -> ())
+	UIKit.Clear(cannonButtons)
+	cannonSpinning = false
+	cannonStatus.Text = "Spin to see how far the cannon fires you!"
+	cannonStatus.TextColor3 = C.Text
+	reelStrip.Position = UDim2.fromOffset(0, 0)
+	UIKit.Button({ Text = ("🎯 SPIN  🪙 %s"):format(Util.FormatNumber(info.headStartPrice or 0)), Size = UDim2.new(0.36, 0, 1, 0), BackgroundColor3 = C.Gold, TextColor3 = Color3.new(0, 0, 0), LayoutOrder = 1 }, function()
+		if not cannonSpinning then
+			onSpin("Coins")
+		end
+	end).Parent = cannonButtons
+	if info.headStartRobux then
+		UIKit.Button({ Text = "🎯 SPIN (R$)", Size = UDim2.new(0.28, 0, 1, 0), BackgroundColor3 = C.Good, LayoutOrder = 2 }, function()
+			if not cannonSpinning then
+				onSpin("Robux")
+			end
+		end).Parent = cannonButtons
+	end
+	UIKit.Button({ Text = "▶ RUN!", Size = UDim2.new(0.3, 0, 1, 0), BackgroundColor3 = C.Accent, LayoutOrder = 3 }, function()
+		if not cannonSpinning then
+			onReady()
+		end
+	end).Parent = cannonButtons
+	cannonPanel.Visible = true
+	tweenIn(cannonPanel)
+
+	cannonDeadline = os.clock() + (info.decisionTime or 7)
+	task.spawn(function()
+		while cannonPanel.Visible do
+			if not cannonSpinning then
+				local left = math.max(0, math.ceil(cannonDeadline - os.clock()))
+				cannonStatus.Text = ("Spin to see how far the cannon fires you!  ·  starting in %ds"):format(left)
+			end
+			task.wait(0.2)
+		end
+	end)
+end
+
+-- Spins the reel and lands on the rolled outcome, then calls onDone.
+function RunHUD.PlaySpin(index: number, meters: number, onDone: () -> ())
+	cannonSpinning = true
+	cannonDeadline += Config.HeadStart.SpinTime + 1.5
+	UIKit.Clear(cannonButtons)
+	cannonStatus.Text = "🎰 SPINNING..."
+	local outcomes = #Config.HeadStart.Outcomes
+	local targetCell = (REEL_REPEATS - 2) * outcomes + (index - 1)
+	local ok, width = pcall(function()
+		return (reelStrip.Parent :: Frame).AbsoluteSize.X
+	end)
+	local windowWidth = if ok then width else 0
+	if windowWidth <= 0 then
+		windowWidth = 420
+	end
+	local targetX = -(targetCell * REEL_CELL + REEL_CELL / 2 - windowWidth / 2)
+	reelStrip.Position = UDim2.fromOffset(0, 0)
+	local tween = TweenService:Create(reelStrip, TweenInfo.new(Config.HeadStart.SpinTime, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(targetX, 0) })
+	tween:Play()
+	task.delay(Config.HeadStart.SpinTime, function()
+		cannonStatus.Text = ("🎯 CANNON LOADED: +%sm HEAD START!"):format(Util.FormatNumber(meters))
+		cannonStatus.TextColor3 = C.Gold
+		tweenIn(cannonStatus)
+		task.wait(1.1)
+		onDone()
+	end)
+end
+
+function RunHUD.CannonFailed(message: string?)
+	cannonSpinning = false
+	if message then
+		RunHUD.Flash(message, C.Bad)
+	end
+end
+
+function RunHUD.HideCannon()
+	if cannonPanel then
+		cannonPanel.Visible = false
+	end
+end
+
+-- ───────────────────────────── biomes ─────────────────────────────
+
+local biomeLabel: TextLabel
+
+function RunHUD.SetBiome(biome: any, announce: boolean)
+	biomeLabel.Text = ("%s %s"):format(biome.icon, string.upper(biome.name))
+	biomeLabel.TextColor3 = biome.coinColor
+	if announce then
+		RunHUD.Big(("%s ENTERING %s"):format(biome.icon, string.upper(biome.name)), biome.coinColor, 2)
+		RunHUD.Flash(("%s · coins worth x%d"):format(biome.description, biome.coinValue), C.Text)
+	end
 end
 
 -- ───────────────────────────── caught / revive ─────────────────────────────
@@ -304,6 +433,7 @@ function RunHUD.Hide()
 	caughtPanel.Visible = false
 	resultsPanel.Visible = false
 	prepCard.Visible = false
+	RunHUD.HideCannon()
 	bigText.Visible = false
 	eventText.Visible = false
 end
@@ -356,6 +486,21 @@ function RunHUD.Init(playerGui: PlayerGui)
 	resultsPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(500, 470), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 8, Parent = gui })
 	UIKit.Corner(18).Parent = resultsPanel
 	UIKit.Stroke(4, C.Gold).Parent = resultsPanel
+
+	biomeLabel = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 142), Size = UDim2.fromOffset(320, 24), Parent = hud })
+
+	-- Head start cannon panel
+	cannonPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -130), Size = UDim2.fromOffset(460, 210), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 6, Parent = gui })
+	UIKit.Corner(16).Parent = cannonPanel
+	UIKit.Stroke(4, Color3.fromRGB(255, 140, 40)).Parent = cannonPanel
+	UIKit.Padding(10).Parent = cannonPanel
+	UIKit.List(nil, 8).Parent = cannonPanel
+	UIKit.Label({ Text = "🎯 HEAD START CANNON", TextColor3 = Color3.fromRGB(255, 170, 60), Size = UDim2.new(1, 0, 0, 30), LayoutOrder = 1, Parent = cannonPanel })
+	local reelHolder = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 74), LayoutOrder = 2, Parent = cannonPanel })
+	buildReel(reelHolder)
+	cannonStatus = UIKit.Label({ Text = "", Size = UDim2.new(1, 0, 0, 22), LayoutOrder = 3, Parent = cannonPanel })
+	cannonButtons = UIKit.New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = 4, Parent = cannonPanel })
+	UIKit.List(Enum.FillDirection.Horizontal, 8).Parent = cannonButtons
 
 	fade = UIKit.New("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 50, Parent = gui })
 	fadeText = UIKit.Label({ Text = "", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.8, 0, 0, 90), ZIndex = 51, Parent = fade })

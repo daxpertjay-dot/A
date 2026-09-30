@@ -7,6 +7,7 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 
 Remotes.Init()
@@ -33,6 +34,15 @@ Economy.OnReviveProductPurchased = function(player: Player): boolean
 	end
 	-- The run already ended: refund the revive as coins so the purchase isn't lost.
 	PlayerData.AddCoins(player, 300)
+	return true
+end
+
+Economy.OnHeadStartPurchased = function(player: Player): boolean
+	if RunManager.GrantHeadStart(player) then
+		return true
+	end
+	-- Too late for this run: refund as coins.
+	PlayerData.AddCoins(player, Config.HeadStart.CoinPrice)
 	return true
 end
 

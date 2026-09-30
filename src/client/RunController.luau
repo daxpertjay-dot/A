@@ -19,6 +19,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
+local BiomeData = require(Shared.BiomeData)
 local ImpactRules = require(Shared.ImpactRules)
 local Remotes = require(Shared.Remotes)
 local Signal = require(Shared.Signal)
@@ -33,7 +34,7 @@ local R = Config.Run
 local C = Config.Chase
 local LANES = R.LanePositions
 
-export type Move = "Running" | "Jumping" | "Falling" | "Rolling" | "Staggered"
+export type Move = "Running" | "Jumping" | "Falling" | "Rolling" | "Staggered" | "Launched"
 export type Phase = "Idle" | "Intro" | "Running" | "Caught"
 
 export type LoadoutSlot = {
@@ -77,6 +78,9 @@ local state = {
 	magnetUntil = 0,
 	magnetRadius = 0,
 	jumpBufferedUntil = 0,
+	biome = BiomeData.List[1] :: BiomeData.Biome,
+	-- Head start cannon flight
+	launch = nil :: { elapsed: number, duration: number, height: number, fromD: number, toD: number, fromY: number, toY: number }?,
 	perks = {} :: { [string]: number }, -- run buddy perk totals
 	buddy = "",
 	doublerUntil = 0,
@@ -94,6 +98,8 @@ RunController.CoinCollected = Signal.new()
 RunController.LoadoutChanged = Signal.new()
 RunController.Event = Signal.new() -- (message: string, color: Color3?)
 RunController.BrainrotCaught = Signal.new() -- (event)
+RunController.BiomeChanged = Signal.new() -- (biome)
+RunController.Landed = Signal.new() -- () cannon flight finished
 
 local player = Players.LocalPlayer
 local character: Model? = nil
@@ -412,7 +418,8 @@ local function onObstacle(obstacle: Instance, part: BasePart)
 		state.d -= C.BumpPushback
 		loseGap(C.GapLoss.Bump)
 		addShake(1.3)
-		RunController.Event:Fire(if tier >= 4 then "😵 OUCH!" else "😵 CRASH! (keep hitting it…)", Color3.fromRGB(255, 90, 90))
+		local message = if obstacle:GetAttribute("Kind") == "LavaPool" then "🔥 HOT HOT HOT! Jump the lava!" elseif tier >= 4 then "😵 OUCH!" else "😵 CRASH! (keep hitting it…)"
+		RunController.Event:Fire(message, Color3.fromRGB(255, 90, 90))
 	end
 	RunController.Impact:Fire(result.outcome)
 end
@@ -464,7 +471,7 @@ local function updateCollectibles(dt: number)
 				end
 				if distance < 3.4 then
 					coin.Transparency = 1
-					state.coins += (if t < state.doublerUntil then 2 else 1) * (1 + (state.perks.CoinBonus or 0))
+					state.coins += (coin:GetAttribute("Value") or 1) * (if t < state.doublerUntil then 2 else 1) * (1 + (state.perks.CoinBonus or 0))
 					RunController.CoinCollected:Fire()
 					Remotes.Event("CollectCoin"):FireServer(coin)
 				else
@@ -516,6 +523,10 @@ local function applyCharacter(xVelocity: number)
 		rollPitch = -math.pi * 2 * p
 		rollDrop = 1.4 * math.sin(math.pi * p)
 	end
+	if state.launch then
+		-- Tumbling through the air after the cannon.
+		rollPitch = -state.elapsed * 7
+	end
 	local stagger = if state.staggerTime > 0 then math.sin(state.staggerTime / C.StaggerTime * math.pi) * 0.35 else 0
 	local lean = math.clamp(-xVelocity * 0.006, -0.3, 0.3)
 	local pos = worldPosition() + Vector3.new(0, hipOffset - rollDrop, 0)
@@ -556,6 +567,40 @@ local function update(dt: number)
 	end
 
 	local t = now()
+
+	-- 🎯 Cannon flight: a big scripted arc down the track, no collisions.
+	local launch = state.launch
+	if launch then
+		launch.elapsed += dt
+		local p = math.clamp(launch.elapsed / launch.duration, 0, 1)
+		state.d = launch.fromD + (launch.toD - launch.fromD) * p
+		state.feetY = launch.fromY + (launch.toY - launch.fromY) * p + 4 * launch.height * p * (1 - p)
+		state.vy = 0
+		state.speed = (launch.toD - launch.fromD) / launch.duration
+		state.meters = math.max(0, (state.d - state.startD) * R.MetersPerStud)
+		state.grounded = false
+		state.move = "Launched"
+		if p >= 1 then
+			state.launch = nil
+			state.grounded = true
+			state.move = "Running"
+			state.speedFactor = 1
+			state.invulnerableUntil = t + Config.HeadStart.LandingInvulnerability
+			state.gap = math.max(state.gap, C.StartGap + (state.perks.StartGap or 0))
+			addShake(1.2)
+			RunController.Landed:Fire()
+		end
+		applyCharacter(0)
+		return
+	end
+
+	-- Biome effects (slippery ice, floaty void)
+	local biome = BiomeData.At(state.meters)
+	if biome ~= state.biome then
+		state.biome = biome
+		RunController.BiomeChanged:Fire(biome)
+	end
+
 	-- Timers
 	if state.staggerTime > 0 then
 		state.staggerTime = math.max(0, state.staggerTime - dt)
@@ -577,14 +622,14 @@ local function update(dt: number)
 	-- Lane interpolation
 	local prevX = state.x
 	if state.laneT < 1 then
-		state.laneT = math.min(1, state.laneT + dt / R.LaneChangeTime)
+		state.laneT = math.min(1, state.laneT + dt / (R.LaneChangeTime * state.biome.laneChangeScale))
 	end
 	local s = state.laneT * state.laneT * (3 - 2 * state.laneT)
 	state.x = Util.Lerp(LANES[state.fromLane], LANES[state.lane], s)
 	local xVelocity = (state.x - prevX) / math.max(dt, 1e-4)
 
 	-- Vertical movement against the ground
-	state.vy -= R.Gravity * dt
+	state.vy -= R.Gravity * state.biome.gravityScale * dt
 	state.feetY += state.vy * dt
 	local ground = probeGround(state.x, state.d, math.max(state.feetY, state.feetY - state.vy * dt) + 3.5)
 	state.groundY = ground or -math.huge
@@ -669,6 +714,8 @@ function RunController.Prepare(info: any): boolean
 	state.buddy = info.buddy or ""
 	state.gap = C.StartGap + (state.perks.StartGap or 0)
 	state.jumpBufferedUntil = 0
+	state.launch = nil
+	state.biome = BiomeData.At(0)
 	state.invulnerableUntil = 0
 	state.shieldUntil, state.boostUntil, state.magnetUntil, state.doublerUntil = 0, 0, 0, 0
 	state.coins = 0
@@ -692,14 +739,33 @@ function RunController.Prepare(info: any): boolean
 	return true
 end
 
-function RunController.Go()
-	if state.phase == "Intro" then
-		state.phase = "Running"
-		state.speedFactor = 0.5 -- quick burst off the line
-		if state.perks.StartShield then
-			state.shieldUntil = os.clock() + state.perks.StartShield
-			RunController.Event:Fire("🛡️ BUDDY SHIELD!", Color3.fromRGB(120, 200, 255))
-		end
+-- GO! With a head start the cannon fires you `headStart` meters down the track.
+function RunController.Go(headStart: number?)
+	if state.phase ~= "Intro" then
+		return
+	end
+	state.phase = "Running"
+	state.speedFactor = 0.5 -- quick burst off the line
+	if state.perks.StartShield then
+		state.shieldUntil = os.clock() + state.perks.StartShield
+		RunController.Event:Fire("🛡️ BUDDY SHIELD!", Color3.fromRGB(120, 200, 255))
+	end
+	if headStart and headStart > 0 then
+		local duration, height = ImpactRules.LaunchProfile(headStart)
+		local toD = state.startD + headStart / R.MetersPerStud
+		local landingY = probeGround(0, toD, 60) or 0
+		state.lane, state.fromLane, state.laneT, state.x = 0, 0, 1, 0
+		state.rollTime = 0
+		state.launch = {
+			elapsed = 0,
+			duration = duration,
+			height = height,
+			fromD = state.d,
+			toD = toD,
+			fromY = state.feetY,
+			toY = landingY,
+		}
+		addShake(1.8)
 	end
 end
 

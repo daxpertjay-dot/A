@@ -7,7 +7,10 @@ local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
 
+local TweenService = game:GetService("TweenService")
+
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local BiomeData = require(Shared.BiomeData)
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 
@@ -54,15 +57,36 @@ local function playSound(id: string, volume: number?)
 	end)
 end
 
--- Fog hides the far end of the generated track during runs.
+-- Each biome has its own sky: fog colour, ambient light and time of day.
+-- Fog also hides the far end of the generated track.
+local lobbyLighting = {
+	ClockTime = Lighting.ClockTime,
+	Ambient = Lighting.Ambient,
+	OutdoorAmbient = Lighting.OutdoorAmbient,
+	Brightness = Lighting.Brightness,
+}
+
+local function setBiomeLighting(biome: any)
+	local l = biome.lighting
+	TweenService:Create(Lighting, TweenInfo.new(1.5), {
+		FogColor = l.fog,
+		OutdoorAmbient = l.ambient,
+		ClockTime = l.clockTime,
+		Brightness = l.brightness,
+	}):Play()
+	Lighting.FogStart = 220
+	Lighting.FogEnd = 650
+end
+
 local function setRunAtmosphere(enabled: boolean)
 	if enabled then
-		Lighting.FogColor = Color3.fromRGB(255, 190, 230)
-		Lighting.FogStart = 250
-		Lighting.FogEnd = 650
+		setBiomeLighting(BiomeData.At(0))
 	else
 		Lighting.FogStart = 0
 		Lighting.FogEnd = 100000
+		for key, value in lobbyLighting do
+			(Lighting :: any)[key] = value
+		end
 	end
 end
 
@@ -100,13 +124,61 @@ Remotes.Event("RunPrepare").OnClientEvent:Connect(function(info)
 	RunCamera.PlayIntro(Config.Run.IntroDuration, Chaser.Position)
 	playSound(Config.Sounds.Tung, 0.9)
 
-	-- Convert the server's go time into local clock time.
-	local goClock = os.clock() + math.max(0, info.goServerTime - workspace:GetServerTimeNow())
-	task.delay(Config.Run.IntroDuration, Chaser.EndIntro)
-	RunHUD.Countdown(goClock, function()
-		playSound(Config.Sounds.Go)
-		RunController.Go()
+	RunHUD.SetBiome(BiomeData.At(0), false)
+	RunHUD.Big("🪵 TUNG TUNG TUNG SAHUR 🪵", Color3.fromRGB(255, 200, 120), Config.Run.IntroDuration - 0.2)
+
+	-- After the intro: the head start cannon offer in the starting area.
+	task.delay(Config.Run.IntroDuration, function()
+		Chaser.EndIntro()
+		if RunController.State.phase ~= "Intro" then
+			return
+		end
+		RunHUD.ShowCannon(info, function(currency)
+			local res = Remotes.Function("BuyHeadStart"):InvokeServer(currency)
+			if type(res) == "table" and res.ok and res.index then
+				RunHUD.PlaySpin(res.index, res.meters, function()
+					Remotes.Event("RunReady"):FireServer()
+				end)
+			elseif type(res) == "table" and not res.ok then
+				RunHUD.CannonFailed(res.message)
+			end
+		end, function()
+			Remotes.Event("RunReady"):FireServer()
+		end)
 	end)
+end)
+
+-- Robux cannon spins come back asynchronously.
+Remotes.Event("HeadStartResult").OnClientEvent:Connect(function(res)
+	if type(res) == "table" and res.ok then
+		RunHUD.PlaySpin(res.index, res.meters, function()
+			Remotes.Event("RunReady"):FireServer()
+		end)
+	end
+end)
+
+-- The server starts the countdown (after RUN!, a spin, or the timer).
+Remotes.Event("RunGo").OnClientEvent:Connect(function(go)
+	local goClock = os.clock() + math.max(0, go.goServerTime - workspace:GetServerTimeNow())
+	RunHUD.Countdown(goClock, go.headStart or 0, function()
+		if (go.headStart or 0) > 0 then
+			playSound(Config.Sounds.Explosion)
+			local startArea = RunController.WorldPosition() + Vector3.new(0, 5, 9)
+			DebrisFX.Explosion(startArea, 10)
+		else
+			playSound(Config.Sounds.Go)
+		end
+		RunController.Go(go.headStart)
+	end)
+end)
+
+RunController.BiomeChanged:Connect(function(biome)
+	setBiomeLighting(biome)
+	RunHUD.SetBiome(biome, true)
+end)
+
+RunController.Landed:Connect(function()
+	RunHUD.Big("🎯 LANDED!", Color3.fromRGB(255, 200, 60), 0.9)
 end)
 
 -- ───────────────────────────── during the run ─────────────────────────────

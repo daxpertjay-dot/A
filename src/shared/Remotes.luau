@@ -18,6 +18,8 @@ local EVENTS = {
 	"RunEnded", -- (results) rewards screen
 	"ReturnedToLobby", -- ()
 	"CrateRevealed", -- (reveal) a crate was opened (e.g. after a Robux purchase)
+	"RunGo", -- (goInfo) countdown start time + head start
+	"HeadStartResult", -- (spin) cannon spin result after a Robux purchase
 
 	-- client → server
 	"ReportHit", -- (object, impactInfo)
@@ -28,6 +30,7 @@ local EVENTS = {
 	"ChooseRevive", -- (useRevive: boolean)
 	"LeaveResults", -- () back to lobby from the rewards screen
 	"GoToBase", -- () teleport to your own plot
+	"RunReady", -- () done deciding in the starting area, start the countdown
 }
 
 local FUNCTIONS = {
@@ -40,6 +43,7 @@ local FUNCTIONS = {
 	"GetLeaderboards",
 	"BuyCoinPack", -- (productKey)
 	"SetBuddy", -- (brainrotId) choose the Brainrot that joins your runs
+	"BuyHeadStart", -- (currency) spin the head start cannon
 }
 
 local Remotes = {}
