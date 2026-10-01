@@ -4,8 +4,11 @@
 -- `model:PivotTo(cframe)` to place it standing on the ground. Swap these out
 -- for real meshes later by returning a cloned asset from ModelFactory.Brainrot.
 
+local CollectionService = game:GetService("CollectionService")
+
 local BrainrotData = require(script.Parent.BrainrotData)
 local Config = require(script.Parent.Config)
+local MutationData = require(script.Parent.MutationData)
 local Util = require(script.Parent.Util)
 
 local ModelFactory = {}
@@ -190,11 +193,39 @@ builders.Cat = function(model, look, s)
 	eyes(model, CFrame.new(0, 3.4 * s, -2.5 * s), 0.55 * s, 0.6 * s)
 end
 
--- Returns a model whose pivot sits at its feet, facing -Z.
-function ModelFactory.Brainrot(id: string, scale: number?): Model
+-- Mutated Brainrots: tinted and re-materialed (eyes stay as they are),
+-- sparkles for the rare ones, colour cycling for Rainbow (LobbyFX).
+local function applyMutation(model: Model, root: BasePart, mutation: MutationData.Mutation)
+	for _, p in model:GetChildren() do
+		if p:IsA("BasePart") and p ~= root and p.Name ~= "Eye" and p.Name ~= "Pupil" then
+			p.Material = mutation.material
+		end
+	end
+	if mutation.sparkles then
+		local sparkles = Instance.new("Sparkles")
+		sparkles.SparkleColor = mutation.color
+		sparkles.Parent = root
+	end
+	if mutation.rainbow then
+		CollectionService:AddTag(model, "Rainbow")
+	end
+	model:SetAttribute("Mutation", mutation.id)
+end
+
+-- Returns a model whose pivot sits at its feet, facing -Z. `key` is a
+-- Brainrot id, optionally with a mutation ("TrippiTroppi:Rainbow").
+function ModelFactory.Brainrot(key: string, scale: number?): Model
+	local id, mutationId = MutationData.Split(key)
 	local data = BrainrotData.Get(id) or BrainrotData.Get(BrainrotData.ChaserId)
 	assert(data, "missing brainrot data")
 	local s = (scale or 1) * data.look.scale
+	local mutation = MutationData.Get(mutationId)
+	local look = data.look
+	if mutation then
+		look = table.clone(look)
+		look.body = look.body:Lerp(mutation.color, 0.75)
+		look.accent = look.accent:Lerp(mutation.color, 0.5)
+	end
 
 	local model = Instance.new("Model")
 	model.Name = data.id
@@ -202,8 +233,11 @@ function ModelFactory.Brainrot(id: string, scale: number?): Model
 	local root = add(model, { Name = "Root", Size = Vector3.new(1, 1, 1), CFrame = CFrame.new(0, 0.5 * s, 0), Transparency = 1, CastShadow = false })
 	model.PrimaryPart = root
 
-	local builder = builders[data.look.shape] or builders.Log
-	builder(model, data.look, s)
+	local builder = builders[look.shape] or builders.Log
+	builder(model, look, s)
+	if mutation then
+		applyMutation(model, root, mutation)
+	end
 
 	model.WorldPivot = CFrame.identity
 	model:SetAttribute("BrainrotId", data.id)

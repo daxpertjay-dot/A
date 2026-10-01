@@ -20,6 +20,7 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local ImpactRules = require(Shared.ImpactRules)
+local MutationData = require(Shared.MutationData)
 local PowerUpData = require(Shared.PowerUpData)
 local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
@@ -59,7 +60,7 @@ type Run = {
 	hoverUntil: number,
 	hoverboardsUsed: number,
 	revives: number,
-	rescued: { string },
+	rescued: { string }, -- keys: "Id" or "Id:Mutation"
 	boxRewards: { { kind: string, amount: number } },
 	caughtClock: number,
 	survival: number,
@@ -449,6 +450,7 @@ local function onPickupItem(player: Player, pickupPart: any)
 	end
 	-- Read everything we need before the part is destroyed.
 	local brainrotId = part:GetAttribute("BrainrotId")
+	local mutationId = part:GetAttribute("Mutation")
 	local powerUpId = part:GetAttribute("PowerUpId")
 	part:Destroy()
 
@@ -456,9 +458,17 @@ local function onPickupItem(player: Player, pickupPart: any)
 	if kind == "Brainrot" then
 		local data = BrainrotData.Get(if type(brainrotId) == "string" then brainrotId else nil)
 		if data then
-			table.insert(run.rescued, data.id)
-			world(player, { type = "BrainrotRescued", id = data.id, name = data.name, icon = data.icon, rarity = data.rarity, bonus = data.bonus })
+			-- The mutation was rolled (server side) when the cage was built.
+			local mutation = MutationData.Get(if type(mutationId) == "string" then mutationId else nil)
+			local key = MutationData.Key(data.id, mutation and mutation.id)
+			table.insert(run.rescued, key)
+			world(player, { type = "BrainrotRescued", id = data.id, label = MutationData.Label(key), rarity = data.rarity, mutation = mutation and mutation.id })
 			comboAdd(run, "Rescue")
+			-- Rare rescues are announced to everyone in the server.
+			if (mutation and mutation.announce) or Config.Mutations.AnnounceRarities[data.rarity] then
+				local color = if mutation then mutation.color else BrainrotData.RarityColors[data.rarity]
+				Remotes.Event("Announce"):FireAllClients(("🔓 %s rescued a %s! (%s)"):format(player.DisplayName, MutationData.Label(key), string.upper(data.rarity)), color)
+			end
 		end
 	elseif kind == "PowerUp" then
 		local powerUp = PowerUpData.Get(if type(powerUpId) == "string" then powerUpId else nil)
@@ -646,10 +656,18 @@ function RunManager.EndRun(player: Player, reason: string)
 			table.insert(levelUps, { name = data.name, icon = data.icon, from = up.from, to = up.to, bonus = up.bonus })
 		end
 		-- Rescued Brainrots go straight to your base (kept even if you're caught).
-		for _, id in run.rescued do
+		for _, key in run.rescued do
+			local id, mutation = MutationData.Split(key)
 			local data = BrainrotData.Get(id) :: BrainrotData.Brainrot
-			table.insert(rescued, { id = id, name = data.name, icon = data.icon, bonus = PlayerData.BrainrotBonus(profile, id), isNew = not profile.Collection[id] })
-			profile.Brainrots[id] = (profile.Brainrots[id] or 0) + 1
+			table.insert(rescued, {
+				id = id,
+				mutation = mutation,
+				label = MutationData.Label(key),
+				icon = data.icon,
+				bonus = PlayerData.BrainrotBonus(profile, key),
+				isNew = (profile.Brainrots[key] or 0) == 0, -- first of this kind/variant
+			})
+			profile.Brainrots[key] = (profile.Brainrots[key] or 0) + 1
 			profile.Collection[id] = true
 			stats.BrainrotsRescued += 1
 		end

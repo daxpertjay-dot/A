@@ -9,6 +9,7 @@ local EVENTS = {
 	-- server → client
 	"DataUpdated", -- (snapshot) full profile snapshot for UI
 	"Notify", -- (text, color?) toast message
+	"Announce", -- (text, color?) to everyone in the server: rare rescues
 	"RunStarting", -- () fade to "RUN STARTING..."
 	"RunPrepare", -- (runInfo) sets up the client run controller
 	"RunWorld", -- (event) power-ups, mystery boxes, rescues, hoverboard, combo

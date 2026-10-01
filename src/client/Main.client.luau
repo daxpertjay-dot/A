@@ -6,6 +6,7 @@
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
+local TextChatService = game:GetService("TextChatService")
 local TweenService = game:GetService("TweenService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
@@ -210,6 +211,23 @@ end)
 -- ───────────────────────────── data / notifications ─────────────────────────────
 
 Remotes.Event("DataUpdated").OnClientEvent:Connect(applyData)
+
+-- Server-wide news (rare rescues): in chat, and on screen.
+Remotes.Event("Announce").OnClientEvent:Connect(function(text: string, color: Color3?)
+	pcall(function()
+		local channels = TextChatService:FindFirstChild("TextChannels")
+		local general = channels and channels:FindFirstChild("RBXGeneral")
+		if general and general:IsA("TextChannel") then
+			local hex = (color or Color3.fromRGB(255, 220, 90)):ToHex()
+			general:DisplaySystemMessage(("<font color=\"#%s\"><b>%s</b></font>"):format(hex, text))
+		end
+	end)
+	if inRun then
+		RunHUD.Flash(text, color)
+	else
+		LobbyUI.Toast(text, color)
+	end
+end)
 Remotes.Event("Notify").OnClientEvent:Connect(function(text: string, color: Color3?)
 	if inRun then
 		RunHUD.Flash(text, color)

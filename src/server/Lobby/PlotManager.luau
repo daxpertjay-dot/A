@@ -18,6 +18,7 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local ModelFactory = require(Shared.ModelFactory)
+local MutationData = require(Shared.MutationData)
 local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
 local Util = require(Shared.Util)
@@ -197,7 +198,8 @@ local function refresh(plot: Plot)
 	-- The Brainrots themselves are only rebuilt when they change.
 	local levels = {}
 	if profile then
-		for _, id in displayed do
+		for _, key in displayed do
+			local id = MutationData.Split(key)
 			table.insert(levels, tostring((Progression.Level(profile.BrainrotXP[id]))))
 		end
 	end
@@ -212,17 +214,23 @@ local function refresh(plot: Plot)
 	end
 
 	for i, pedestalCf in plot.pedestals do
-		local id = displayed[i]
-		local data = BrainrotData.Get(id)
-		if data then
+		local key = displayed[i]
+		local data = if key then BrainrotData.Get((MutationData.Split(key))) else nil
+		if key and data then
 			-- A rescued Brainrot showing the multiplier it adds.
-			local model = ModelFactory.Brainrot(data.id, 0.9)
+			local mutation = MutationData.Get(select(2, MutationData.Split(key)))
+			local model = ModelFactory.Brainrot(key, 0.9)
 			model:PivotTo(pedestalCf)
 			model.Parent = plot.dynamic
 			CollectionService:AddTag(model, "LobbyDance")
 			model:SetAttribute("Style", "Hop")
 			local level = Progression.Level(profile.BrainrotXP[data.id])
-			label(model, ("%s %s  Lv %d\n+%s SCORE"):format(data.icon, data.name, level, Progression.FormatMultiplier(PlayerData.BrainrotBonus(profile, data.id))), BrainrotData.RarityColors[data.rarity], 9)
+			label(
+				model,
+				("%s %s  Lv %d\n+%s SCORE"):format(data.icon, MutationData.Label(key), level, Progression.FormatMultiplier(PlayerData.BrainrotBonus(profile, key))),
+				if mutation then mutation.color else BrainrotData.RarityColors[data.rarity],
+				9
+			)
 		else
 			local marker = part({ Parent = plot.dynamic, Name = "SlotMarker", Size = Vector3.new(6.6, 0.2, 6.6), CFrame = pedestalCf * CFrame.new(0, -0.15, 0), Transparency = 0.5, CanCollide = false, Studs = false, Color = Color3.fromRGB(255, 255, 255) })
 			if i <= profile.Pedestals then

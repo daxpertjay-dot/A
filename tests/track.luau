@@ -31,7 +31,11 @@ while d < 20000 do
 				local pk = inst:GetAttribute("Pickup")
 				if pk == "PowerUp" then stats.powerups[inst:GetAttribute("PowerUpId")] = (stats.powerups[inst:GetAttribute("PowerUpId")] or 0) + 1 end
 				if pk == "MysteryBox" then stats.boxes += 1 end
-				if pk == "Brainrot" then stats.cages += 1 end
+				if pk == "Brainrot" then
+					stats.cages += 1
+					local m = inst:GetAttribute("Mutation")
+					if m then stats["mutated " .. m] = (stats["mutated " .. m] or 0) + 1 end
+				end
 				if inst:GetAttribute("ObstacleType") then stats.obstacles += 1 end
 				if inst:IsA("BasePart") then stats.parts += 1 end
 				if inst.Name == "StandTop" then stats.standTops += 1 end
@@ -48,5 +52,24 @@ assert(stats.segments > 100, "track keeps generating")
 assert(stats.coins / stats.segments > 8, "enough coins per segment")
 assert((stats.Buses or 0) > 0 and (stats.Tunnel or 0) > 0 and (stats.Rescue or 0) > 0, "all segment types appear")
 assert(stats.parts / stats.segments < 200, "segments stay light")
+-- Mutation odds over many rolls
+local MutationData = req(H.shared.MutationData)
+local rng = H.Random.new(7)
+local rolls, counts = 200000, {}
+for _ = 1, rolls do
+	local m = MutationData.Roll(rng)
+	local k = if m then m.id else "Normal"
+	counts[k] = (counts[k] or 0) + 1
+end
+for _, m in MutationData.List do
+	local got = (counts[m.id] or 0) / rolls
+	print(("mutation %-8s expected %.3f%% got %.3f%%"):format(m.id, m.chance * 100, got * 100))
+	assert(math.abs(got - m.chance) < m.chance * 0.2 + 0.0005, "mutation odds off for " .. m.id)
+end
+assert(MutationData.Split("TrippiTroppi:Rainbow") == "TrippiTroppi" and select(2, MutationData.Split("TrippiTroppi:Rainbow")) == "Rainbow")
+assert(MutationData.Split("TrippiTroppi") == "TrippiTroppi" and select(2, MutationData.Split("TrippiTroppi")) == nil)
+assert(MutationData.Label("TrippiTroppi:Gold") == "🥇 Gold Trippi Troppi")
+local model = req(H.shared.ModelFactory).Brainrot("TrippiTroppi:Diamond", 1)
+assert(model:GetAttribute("Mutation") == "Diamond" and model:FindFirstChildOfClass("Part") ~= nil)
 print("SMOKE OK")
 require("@lune/process").exit(0)

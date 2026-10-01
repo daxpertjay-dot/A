@@ -13,6 +13,10 @@ H.remotes.Event = function(name)
 			if name == "RunWorld" then table.insert(worldEvents, (...)) end
 			if name ~= "DataUpdated" then print("  → client", name, name == "RunWorld" and (...).type or "") end
 		end,
+		FireAllClients = function(_, ...)
+			clientEvents[name] = { ... }
+			print("  → everyone", name, (...))
+		end,
 		OnServerEvent = sig(handlers, name),
 	}
 end
@@ -106,7 +110,8 @@ for _, d in prep.trackFolder:GetDescendants() do if d.Parent and d.Parent.Name =
 print("sky coins spawned", sky)
 handlers.PickupItem(player, place({ Pickup = "PowerUp", PowerUpId = "ScoreBooster" }))
 handlers.PickupItem(player, place({ Pickup = "MysteryBox" }))
-handlers.PickupItem(player, place({ Pickup = "Brainrot", BrainrotId = "CappuccinoAssassino" }))
+handlers.PickupItem(player, place({ Pickup = "Brainrot", BrainrotId = "CappuccinoAssassino", Mutation = "Rainbow" }))
+assert(clientEvents.Announce and clientEvents.Announce[1]:find("Rainbow Cappuccino"), "rare rescue announced to the server")
 handlers.CollectCoin(player, place({ Coin = true, Value = 1 }))
 -- booster: next 100 studs score double
 local before = 0
@@ -130,6 +135,12 @@ for _, up in r.levelUps do print("  level up", up.name, up.from, "→", up.to, "
 local P = H.require(H.shared.Progression)
 for id, xp in profile.BrainrotXP do print("  xp", id, xp, "level", (P.Level(xp))) end
 print("profile hype after run", profile.Hype)
+assert(profile.Brainrots["CappuccinoAssassino:Rainbow"] == 1, "mutated rescue stored by key")
+local P2 = H.require(H.shared.Progression)
+local rainbowBonus = PlayerData.BrainrotBonus(profile, "CappuccinoAssassino:Rainbow")
+print("rainbow cappuccino bonus", rainbowBonus, "normal would be", P2.Bonus("CappuccinoAssassino", profile.BrainrotXP.CappuccinoAssassino))
+assert(math.abs(rainbowBonus - 5 * P2.Bonus("CappuccinoAssassino", profile.BrainrotXP.CappuccinoAssassino)) < 1e-9)
+assert(r.rescued[1].label == "🌈 Rainbow Cappuccino Assassino" and r.rescued[1].isNew)
 handlers.LeaveResults(player)
 print("profile after: highscore", profile.Stats.HighScore, "rescued", profile.Stats.BrainrotsRescued, "boards", profile.Hoverboards, "load", loadCount)
 -- Died during the "RUN STARTING..." fade: the run must not carry on starting.

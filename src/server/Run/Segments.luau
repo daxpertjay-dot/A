@@ -21,6 +21,7 @@ local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local ImpactRules = require(Shared.ImpactRules)
 local ModelFactory = require(Shared.ModelFactory)
+local MutationData = require(Shared.MutationData)
 local PowerUpData = require(Shared.PowerUpData)
 local Util = require(Shared.Util)
 
@@ -708,7 +709,10 @@ define({
 		if brainrot then
 			local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
 			local d = ctx.length / 2
-			local color = BrainrotData.RarityColors[brainrot.rarity] or THEME.Coin
+			-- Sometimes it's a rare variant, visible in the cage before you get there.
+			local mutation = MutationData.Roll(ctx.rng)
+			local key = MutationData.Key(brainrot.id, mutation and mutation.id)
+			local color = if mutation then mutation.color else (BrainrotData.RarityColors[brainrot.rarity] or THEME.Coin)
 			-- The pickup is the glowing floor plate; the cage and Brainrot hang off it.
 			local plate = Util.Part({
 				Name = "BrainrotCage",
@@ -722,6 +726,9 @@ define({
 			})
 			plate:SetAttribute("Pickup", "Brainrot")
 			plate:SetAttribute("BrainrotId", brainrot.id)
+			if mutation then
+				plate:SetAttribute("Mutation", mutation.id)
+			end
 			for _, corner in { Vector3.new(-3, 0, -3), Vector3.new(3, 0, -3), Vector3.new(-3, 0, 3), Vector3.new(3, 0, 3) } do
 				Util.Part({ Parent = plate, Name = "CageBar", Size = Vector3.new(0.4, 9, 0.4), CFrame = CF(ctx, LANES[lane] + corner.X, 4.7, d + corner.Z), Color = Color3.fromRGB(60, 60, 70), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false })
 			end
@@ -729,10 +736,11 @@ define({
 				Util.Part({ Parent = plate, Name = "CageBar", Size = Vector3.new(0.25, 9, 0.25), CFrame = CF(ctx, LANES[lane] + i * 1.5, 4.7, d - 3), Color = Color3.fromRGB(60, 60, 70), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false })
 			end
 			Util.Part({ Parent = plate, Name = "CageTop", Size = Vector3.new(6.8, 0.5, 6.8), CFrame = CF(ctx, LANES[lane], 9.3, d), Color = Color3.fromRGB(60, 60, 70), Material = Enum.Material.Metal, CanCollide = false, CanQuery = false })
-			local model = ModelFactory.Brainrot(brainrot.id, 0.9)
+			local model = ModelFactory.Brainrot(key, 0.9)
 			model:PivotTo(CF(ctx, LANES[lane], 0.4, d) * CFrame.Angles(0, math.pi, 0))
 			model.Parent = plate
-			ModelFactory.NameTag(model, ("🔓 RESCUE %s %s  (+%dx)"):format(brainrot.icon, string.upper(brainrot.name), brainrot.bonus), color, 12)
+			local bonus = brainrot.bonus * MutationData.Multiplier(mutation and mutation.id)
+			ModelFactory.NameTag(model, ("🔓 RESCUE %s %s  (+%dx)"):format(brainrot.icon, string.upper(MutationData.Label(key)), bonus), color, 12)
 			coinLine(ctx, lane, d - 32, d - 8)
 			obstacleRows(ctx, d + 16, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
 		end

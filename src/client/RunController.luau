@@ -1036,7 +1036,7 @@ function RunController.HandleWorldEvent(event: any)
 		end
 		RunController.Event:Fire(text, Color3.fromRGB(255, 200, 60))
 	elseif event.type == "BrainrotRescued" then
-		RunController.Event:Fire(("🔓 RESCUED %s %s!"):format(event.icon, string.upper(event.name)), Color3.fromRGB(255, 140, 230))
+		RunController.Event:Fire(("🔓 RESCUED %s!"):format(string.upper(event.label)), Color3.fromRGB(255, 140, 230))
 	elseif event.type == "Combo" then
 		-- The server owns the combo; adopt its value.
 		state.combo.stacks = event.stacks

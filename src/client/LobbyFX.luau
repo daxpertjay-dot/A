@@ -188,7 +188,34 @@ function LobbyFX.Init()
 		addConveyor(belt)
 	end
 	CollectionService:GetInstanceAddedSignal("Conveyor"):Connect(addConveyor)
+	-- 🌈 Rainbow-mutated Brainrots cycle their colours (on bases and in cages).
+	local rainbow: { [Model]: { BasePart } } = {}
+	local function addRainbow(instance: Instance)
+		if instance:IsA("Model") then
+			local parts = {}
+			for _, p in instance:GetChildren() do
+				if p:IsA("BasePart") and p.Transparency < 1 and p.Name ~= "Eye" and p.Name ~= "Pupil" then
+					table.insert(parts, p)
+				end
+			end
+			rainbow[instance] = parts
+		end
+	end
+	for _, model in CollectionService:GetTagged("Rainbow") do
+		addRainbow(model)
+	end
+	CollectionService:GetInstanceAddedSignal("Rainbow"):Connect(addRainbow)
+	CollectionService:GetInstanceRemovedSignal("Rainbow"):Connect(function(instance)
+		rainbow[instance :: Model] = nil
+	end)
+
 	RunService.RenderStepped:Connect(function(dt)
+		local hue = os.clock() * 0.25
+		for _, parts in rainbow do
+			for i, p in parts do
+				p.Color = Color3.fromHSV((hue + i * 0.07) % 1, 0.75, 1)
+			end
+		end
 		step(dt)
 		if enabled then
 			stepConveyors(dt)

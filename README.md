@@ -69,6 +69,20 @@ A jump instantly cancels a roll, and a jump pressed just before landing fires on
 - This is the loop: a higher multiplier means a higher score, which means more XP and level-ups, which means a higher multiplier. Every run improves your base, even a bad one.
 - Levels belong to each kind of Brainrot, so every copy of Tralalero shares one level. Pedestals show "Lv 7", and the Brainrots panel shows XP bars.
 
+### 🌈 Mutations
+A caged Brainrot is sometimes a rare variant. You can see it in the cage, tinted and sparkling, before you reach it. A mutation multiplies that Brainrot's bonus:
+
+| Mutation | Bonus | Chance per cage |
+|---|---|---|
+| 🥇 Gold | ×2 | 10% |
+| 💎 Diamond | ×3 | 3.5% |
+| 🌈 Rainbow (colours cycle) | ×5 | 1% |
+| 🌌 Galaxy | ×10 | 0.2% |
+
+- Variants are kept separately, so a Rainbow Tralalero and a normal one are different pedestal entries. They share the same level.
+- **Rare rescues are announced to the whole server** in chat and on screen: any Diamond, Rainbow or Galaxy, and every Legendary.
+- `Config.Mutations.Luck` multiplies every chance, ready for "lucky hour" events or a server-luck boost later.
+
 ### 🔥 Style combo: rewards focus
 Playing well builds a combo that multiplies your multiplier, from x1.0 up to **x3.0** (20 stacks):
 
@@ -165,6 +179,9 @@ With the 🚀 Jetpack your character flies Superman-style: tipped forward, one f
   - your personal run portal
 - The HUD buttons open everything from anywhere: Upgrades, Brainrots, Shop, Daily, Top, Stats, My Base.
 
+## Tests
+`tests/run.sh` runs the headless test suite with [Lune](https://lune-org.github.io/docs). It covers track generation, a full server run, the UI, jump boosts and side bumps, and a bot that plays for 90 seconds. See CLAUDE.md for details.
+
 ## Project layout
 
 ```
@@ -174,6 +191,7 @@ src/
 │   ├── PowerUpData.luau       power-ups, durations per level, upgrade costs
 │   ├── BrainrotData.luau      Brainrots: multiplier bonus, rarity, where they appear
 │   ├── Progression.luau       Brainrot levels/XP, style combo, Hype (shared math)
+│   ├── MutationData.luau      Gold / Diamond / Rainbow / Galaxy variants
 │   ├── DailyRewardData.luau   7-day reward track
 │   ├── ImpactRules.luau       crash rules + jump physics (shared client/server)
 │   ├── ModelFactory.luau      blocky Brainrot + villain models

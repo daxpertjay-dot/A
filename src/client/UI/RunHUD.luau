@@ -351,7 +351,7 @@ function RunHUD.ShowResults(results: any)
 		line(("🛹 +%d hoverboard%s"):format(results.boxBoards, if results.boxBoards == 1 then "" else "s"), Color3.fromRGB(120, 200, 255))
 	end
 	for _, b in results.rescued do
-		line(("🔓 Rescued %s %s  (+%s)%s"):format(b.icon, b.name, Progression.FormatMultiplier(b.bonus), if b.isNew then " — NEW!" else ""), Color3.fromRGB(255, 140, 230))
+		line(("🔓 Rescued %s %s  (+%s)%s"):format(b.icon, b.label or b.name, Progression.FormatMultiplier(b.bonus), if b.isNew then " — NEW!" else ""), Color3.fromRGB(255, 140, 230))
 	end
 	if (results.xp or 0) > 0 then
 		line(("🧠 Your Brainrots gained +%s XP"):format(Util.FormatNumber(results.xp)), Color3.fromRGB(190, 150, 255))

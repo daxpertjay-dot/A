@@ -61,6 +61,17 @@ Config.Levels = {
 	BonusPerLevel = 0.25,
 }
 
+-- ───────────────────────────── MUTATIONS ─────────────────────────────
+-- Rare Brainrot variants (Gold x2, Diamond x3, Rainbow x5, Galaxy x10); see
+-- MutationData for the chances. Luck multiplies every chance (for events or
+-- a "server luck" boost later).
+Config.Mutations = {
+	Luck = 1,
+	-- Rescues announced to the whole server: any mutation marked `announce`
+	-- in MutationData, plus every Brainrot of these rarities.
+	AnnounceRarities = { Legendary = true } :: { [string]: boolean },
+}
+
 -- ───────────────────────────── STYLE COMBO ─────────────────────────────
 -- Playing well during a run builds a combo that multiplies your multiplier.
 -- It drains if you play it safe and resets when you crash.

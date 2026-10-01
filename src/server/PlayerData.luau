@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
+local MutationData = require(Shared.MutationData)
 local PowerUpData = require(Shared.PowerUpData)
 local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
@@ -27,7 +28,7 @@ export type Stats = {
 export type Profile = {
 	Version: number,
 	Coins: number,
-	Brainrots: { [string]: number }, -- brainrotId -> copies rescued
+	Brainrots: { [string]: number }, -- key ("Id" or "Id:Mutation") -> copies rescued
 	Collection: { [string]: boolean }, -- brainrotId -> ever rescued
 	BrainrotXP: { [string]: number }, -- brainrotId -> XP (levels are per Brainrot kind)
 	Hype: number, -- 0..1, charged by your base while you're away
@@ -147,18 +148,20 @@ end
 
 -- ───────────────────────────── score multiplier ─────────────────────────────
 
-function PlayerData.BrainrotBonus(profile: Profile, id: string): number
-	return Progression.Bonus(id, profile.BrainrotXP[id])
+-- Bonus of an owned Brainrot: its kind's level × its mutation.
+function PlayerData.BrainrotBonus(profile: Profile, key: string): number
+	local id, mutation = MutationData.Split(key)
+	return Progression.Bonus(id, profile.BrainrotXP[id]) * MutationData.Multiplier(mutation)
 end
 
 -- Brainrots standing on the base's pedestals, best (levelled) bonus first.
 -- Every rescued copy can take a pedestal.
 function PlayerData.DisplayedBrainrots(profile: Profile): { string }
 	local copies = {}
-	for id, count in profile.Brainrots do
-		if BrainrotData.Get(id) then
+	for key, count in profile.Brainrots do
+		if BrainrotData.Get((MutationData.Split(key))) then
 			for _ = 1, count do
-				table.insert(copies, id)
+				table.insert(copies, key)
 			end
 		end
 	end
@@ -210,14 +213,15 @@ function PlayerData.AwardBrainrotXP(profile: Profile, xp: number): { { id: strin
 		return levelUps
 	end
 	local seen: { [string]: boolean } = {}
-	for _, id in PlayerData.DisplayedBrainrots(profile) do
+	for _, key in PlayerData.DisplayedBrainrots(profile) do
+		local id = MutationData.Split(key)
 		if not seen[id] then
 			seen[id] = true
 			local before = Progression.Level(profile.BrainrotXP[id])
 			profile.BrainrotXP[id] = (profile.BrainrotXP[id] or 0) + xp
 			local after = Progression.Level(profile.BrainrotXP[id])
 			if after > before then
-				table.insert(levelUps, { id = id, from = before, to = after, bonus = PlayerData.BrainrotBonus(profile, id) })
+				table.insert(levelUps, { id = id, from = before, to = after, bonus = Progression.Bonus(id, profile.BrainrotXP[id]) })
 			end
 		end
 	end
@@ -300,12 +304,13 @@ function PlayerData.AddCoins(player: Player, amount: number)
 	PlayerData.Changed(player)
 end
 
-function PlayerData.GrantBrainrot(player: Player, id: string, count: number?)
+function PlayerData.GrantBrainrot(player: Player, key: string, count: number?)
 	local profile = profiles[player]
+	local id = MutationData.Split(key)
 	if not profile or not BrainrotData.Get(id) then
 		return
 	end
-	profile.Brainrots[id] = (profile.Brainrots[id] or 0) + (count or 1)
+	profile.Brainrots[key] = (profile.Brainrots[key] or 0) + (count or 1)
 	profile.Collection[id] = true
 	PlayerData.Changed(player)
 end

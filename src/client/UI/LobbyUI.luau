@@ -11,6 +11,7 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local DailyRewardData = require(Shared.DailyRewardData)
+local MutationData = require(Shared.MutationData)
 local PowerUpData = require(Shared.PowerUpData)
 local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
@@ -202,14 +203,31 @@ local function buildBrainrots(content: Frame)
 		Position = UDim2.fromOffset(0, 32),
 		Parent = content,
 	})
-	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -72), Position = UDim2.fromOffset(0, 72) })
+	local odds = {}
+	for _, m in MutationData.List do
+		table.insert(odds, ("%s %s x%d (%s%%)"):format(m.icon, m.name, m.multiplier, ("%g"):format(m.chance * 100)))
+	end
+	UIKit.Label({ Text = "Mutations:  " .. table.concat(odds, "   "), TextColor3 = C.Accent2, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 68), Parent = content })
+	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -94), Position = UDim2.fromOffset(0, 94) })
 	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(170, 222), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+	-- Owned copies per Brainrot kind, and which mutations of it you have.
 	local onPedestal: { [string]: number } = {}
-	for _, id in displayed do
+	for _, key in displayed do
+		local id = MutationData.Split(key)
 		onPedestal[id] = (onPedestal[id] or 0) + 1
 	end
+	local counts: { [string]: number } = {}
+	local variants: { [string]: { [string]: number } } = {}
+	for key, n in owned do
+		local id, mutation = MutationData.Split(key)
+		counts[id] = (counts[id] or 0) + n
+		if mutation and n > 0 then
+			variants[id] = variants[id] or {}
+			variants[id][mutation] = (variants[id][mutation] or 0) + n
+		end
+	end
 	for i, b in BrainrotData.List do
-		local count = owned[b.id] or 0
+		local count = counts[b.id] or 0
 		local have = count > 0
 		local rarityColor = BrainrotData.RarityColors[b.rarity] or C.Gold
 		local card = UIKit.Card({ LayoutOrder = i, Parent = grid })
@@ -218,7 +236,14 @@ local function buildBrainrots(content: Frame)
 		end
 		UIKit.Label({ Text = if have then b.icon else "❓", Size = UDim2.new(1, 0, 0, 56), Position = UDim2.fromOffset(0, 6), Parent = card })
 		UIKit.Label({ Text = if have then ("%s  x%d"):format(b.name, count) else "???", Size = UDim2.new(1, -8, 0, 22), Position = UDim2.fromOffset(4, 64), Parent = card })
-		UIKit.Label({ Text = string.upper(b.rarity), Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 88), TextColor3 = rarityColor, Parent = card })
+		local mutationText = ""
+		for _, m in MutationData.List do
+			local n = variants[b.id] and variants[b.id][m.id]
+			if n then
+				mutationText ..= (" %s%d"):format(m.icon, n)
+			end
+		end
+		UIKit.Label({ Text = string.upper(b.rarity) .. mutationText, Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 88), TextColor3 = rarityColor, Parent = card })
 		local level, into, need = Progression.Level(xpTable[b.id])
 		UIKit.Label({
 			Text = if have then ("Lv %d  ·  ⭐ +%s"):format(level, Progression.FormatMultiplier(Progression.BonusAt(b.id, level))) else ("⭐ +%s multiplier"):format(Progression.FormatMultiplier(b.bonus)),
@@ -360,8 +385,8 @@ local function buildStats(content: Frame)
 	local stats = if data then data.Stats else {}
 	local found = 0
 	if data then
-		for _, count in data.Brainrots do
-			if count > 0 then
+		for _, b in BrainrotData.List do
+			if data.Collection[b.id] then
 				found += 1
 			end
 		end
