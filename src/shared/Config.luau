@@ -34,7 +34,19 @@ Config.Lobby = {
 	StreetHalfWidth = 34, -- plots start this far from the centre line
 	ConveyorSpeed = 30, -- studs/sec
 	ConveyorWidth = 8,
-	UseStuds = true, -- classic stud / inlet surfaces on lobby parts
+	UseStuds = true, -- blocky stud look on lobby parts
+	-- Square stud texture on every face (the Steal a Brainrot / Grow a Garden
+	-- look). Upload assets/StudTexture.png in Studio (Asset Manager → Import,
+	-- or the Toolbox) and paste its id here, e.g. "rbxassetid://1234567890".
+	-- Empty = Roblox's classic round studs on top faces instead.
+	StudTexture = "",
+	StudTextureSize = 2, -- studs per square
+	-- Your own decoration models. Put Models in a folder with this name in
+	-- ServerStorage, named after a prop kind below, and they replace the
+	-- built-in blocky versions wherever that kind is placed. Each model is
+	-- set on the ground (by its bounding box), turned randomly and anchored.
+	PropsFolder = "LobbyProps",
+	PropKinds = { "Tree", "PalmTree", "Bush", "Rock", "Flowers", "Lamp" },
 }
 
 -- ───────────────────────────── SCORE ─────────────────────────────
@@ -118,6 +130,10 @@ Config.Economy = {
 	CoinValue = 1,
 	ReviveBaseCost = 200, -- doubles every revive in the same run
 	MaxRevivesPerRun = 3,
+	-- Reviving sends out a shockwave that destroys every structure (buses,
+	-- walls, barriers…) from this far behind you to this far ahead (studs).
+	ReviveClearBehind = 45,
+	ReviveClearAhead = 110,
 	HoverboardCost = 300,
 	StartingHoverboards = 2,
 	MysteryBox = {
@@ -188,7 +204,9 @@ Config.Run = {
 -- Picked up on the track (Subway Surfers style). Upgrading one with coins
 -- makes it last longer. See PowerUpData for the list.
 Config.PowerUps = {
-	SpawnChancePerSegment = 0.45,
+	SpawnChancePerSegment = 0.15, -- a random power-up at the start of a segment
+	MysteryBoxChancePerSegment = 0.06, -- otherwise, a mystery box
+	BoostBeforeTallChance = 0.2, -- 👟 sneakers placed just before buses / tunnels
 	MagnetRadius = 26,
 	JetpackHeight = 32, -- studs above the street while flying (tunnel roofs are 16)
 	JetpackSpeedMultiplier = 1.25,
@@ -273,6 +291,9 @@ Config.Animations = {
 	-- Optional jetpack flight animation id. Leave "" to use the built-in
 	-- Superman pose (one fist forward, legs trailing, jetpack flames).
 	Fly = "",
+	-- Optional hoverboard animation id. Leave "" to use the built-in surf
+	-- stance (turned sideways, knees bent, arms out).
+	Hoverboard = "",
 }
 
 -- Robux developer products. Leave at 0 until you create them on the Creator

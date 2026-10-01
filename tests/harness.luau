@@ -121,6 +121,7 @@ local ReplicatedStorage = { WaitForChild = function(_, n) assert(n == "Shared");
 local services = {
 	ReplicatedStorage = ReplicatedStorage,
 	CollectionService = CollectionService,
+	ServerStorage = { FindFirstChild = function() return nil end },
 	PhysicsService = { RegisterCollisionGroup = function() end, CollisionGroupSetCollidable = function() end },
 	RunService = { IsServer = function() return true end, IsStudio = function() return true end, Heartbeat = signal() },
 	Players = { PlayerAdded = signal(), PlayerRemoving = signal(), GetPlayers = function() return {} end },
@@ -152,4 +153,4 @@ function loadModule(n)
 	return fn()
 end
 
-return { root = ROOT, Random = Random, fireAdded = function(d) for _, fn in addedHandlers do fn(d) end end, services = services, remotes = RemotesMock, node = node, require = customRequire, shared = sharedNode, server = serverNode, workspace = workspaceFolder, tags = tags, fired = fired, CFrame = CFrame, Vector3 = Vector3, Instance = roblox.Instance }
+return { root = ROOT, Enum = roblox.Enum, Random = Random, fireAdded = function(d) for _, fn in addedHandlers do fn(d) end end, services = services, remotes = RemotesMock, node = node, require = customRequire, shared = sharedNode, server = serverNode, workspace = workspaceFolder, tags = tags, fired = fired, CFrame = CFrame, Vector3 = Vector3, Instance = roblox.Instance }

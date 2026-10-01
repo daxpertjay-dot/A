@@ -28,7 +28,7 @@ local EVENTS = {
 	"ReportCaught", -- ()
 	"ChooseRevive", -- ("Coins" | "Robux" | false)
 	"LeaveResults", -- () back to the lobby from the rewards screen
-	"GoToBase", -- () teleport to your own plot
+	"GoToBase", -- ("Respawn"?) teleport to your own plot (respawning if there's no usable character)
 }
 
 local FUNCTIONS = {

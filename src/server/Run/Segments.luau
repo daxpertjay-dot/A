@@ -75,8 +75,6 @@ export type Ctx = {
 local OBSTACLE_TYPE: { [string]: string } = {
 	Barricade = "Jump",
 	SteelBarrier = "Jump",
-	OverheadSign = "Roll",
-	OverheadPipe = "Roll",
 	Crates = "Block",
 	WoodWall = "Block",
 	ConcreteWall = "Block",
@@ -147,7 +145,7 @@ local function cityScenery(ctx: Ctx)
 	local rng = ctx.rng
 	local edge = ROAD_WIDTH / 2 + 0.8 + SIDEWALK
 	for _, side in { -1, 1 } do
-		for d = 20, ctx.length, 40 do
+		for d = 30, ctx.length, 60 do
 			local x = side * (ROAD_WIDTH / 2 + 2)
 			local pole = scenery(ctx, { Name = "LampPole", Size = Vector3.new(0.6, 13, 0.6), CFrame = CF(ctx, x, 6.5, d), Color = Color3.fromRGB(45, 45, 55) })
 			scenery(ctx, { Parent = pole, Name = "Lamp", Size = Vector3.new(2.6, 0.5, 1.2), CFrame = CF(ctx, x - side * 1, 13, d), Color = Color3.fromRGB(255, 230, 160), Material = Enum.Material.Neon, CanCollide = false })
@@ -173,7 +171,7 @@ local function cityScenery(ctx: Ctx)
 			Util.SurfaceLabel(sign, if side < 0 then Enum.NormalId.Right else Enum.NormalId.Left, SHOP_SIGNS[rng:NextInteger(1, #SHOP_SIGNS)], { PixelsPerStud = 10, TextColor = shopColor })
 			-- Lit apartment windows above
 			scenery(ctx, { Parent = building, Name = "Windows", Size = Vector3.new(0.2, height - 16, depth * 0.8), CFrame = building.CFrame * CFrame.new(face, 5, 0), Color = Color3.fromRGB(255, 230, 170), Material = Enum.Material.Neon, Transparency = 0.6, CanCollide = false })
-			if rng:NextNumber() < 0.25 then
+			if rng:NextNumber() < 0.15 then
 				local board = scenery(ctx, { Parent = building, Name = "Billboard", Size = Vector3.new(width * 0.8, 8, 0.6), CFrame = CF(ctx, x, height + 5, d + depth / 2) * CFrame.Angles(0, math.rad(side * 70), 0), Color = Color3.fromRGB(25, 20, 35) })
 				Util.SurfaceLabel(board, Enum.NormalId.Front, BILLBOARDS[rng:NextInteger(1, #BILLBOARDS)], { PixelsPerStud = 8, TextColor = THEME.Neon[rng:NextInteger(1, #THEME.Neon)] })
 			end
@@ -277,31 +275,6 @@ builders.SteelBarrier = function(ctx, lane, d)
 	for i = -1, 1 do
 		scenery(ctx, { Parent = m, Name = "Stripe", Size = Vector3.new(1.2, 3.02, 1.22), CFrame = CF(ctx, x + i * 2.4, 1.5, d), Color = Color3.fromRGB(255, 120, 0), Material = Enum.Material.SmoothPlastic, CanCollide = false })
 	end
-	Destruction.Setup(m, 4)
-	return m
-end
-
-builders.OverheadSign = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "OverheadSign", lane, d)
-	local x = LANES[lane]
-	for _, side in { -1, 1 } do
-		solid(m, { Name = "Post", Size = Vector3.new(0.4, 10.5, 0.4), CFrame = CF(ctx, x + side * 3.7, 5.25, d), Color = Color3.fromRGB(80, 80, 90), Material = Enum.Material.Metal })
-	end
-	local board = solid(m, { Name = "Board", Size = Vector3.new(7, 7, 0.4), CFrame = CF(ctx, x, 3.4 + 3.5, d), Color = ({ Color3.fromRGB(255, 90, 160), Color3.fromRGB(40, 140, 255), Color3.fromRGB(40, 160, 90) })[ctx.rng:NextInteger(1, 3)] })
-	local texts = { "VERITY\nWAS HERE", "⬇️ ROLL ⬇️", "TRALALERO\nAVENUE", "DUCK!", "BRAINROT\nCITY" }
-	Util.SurfaceLabel(board, Enum.NormalId.Back, texts[ctx.rng:NextInteger(1, #texts)], { PixelsPerStud = 20 })
-	Destruction.Setup(m, 1, "Shatter", "Metal")
-	return m
-end
-
--- A scaffolding beam across the lane (unbreakable: roll under it).
-builders.OverheadPipe = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "OverheadPipe", lane, d)
-	local x = LANES[lane]
-	for _, side in { -1, 1 } do
-		solid(m, { Name = "Support", Size = Vector3.new(0.6, 10.5, 0.6), CFrame = CF(ctx, x + side * 3.7, 5.25, d), Color = Color3.fromRGB(90, 90, 100), Material = Enum.Material.Metal })
-	end
-	solid(m, { Name = "Beam", Size = Vector3.new(7, 7, 1.4), CFrame = CF(ctx, x, 3.4 + 3.5, d), Color = Color3.fromRGB(255, 170, 30), Material = Enum.Material.Metal })
 	Destruction.Setup(m, 4)
 	return m
 end
@@ -422,9 +395,10 @@ local function pick<T>(rng: Random, weighted: { [T]: number }): T
 	return last
 end
 
--- Rows of obstacles between d0 and d1. Rows are well spaced (the lanes stay
--- readable), every row leaves a way through without breaking anything, and
--- coin lines guide you through the gaps.
+-- Rows of obstacles between d0 and d1. Rows are well spaced and often only
+-- one or two lanes are blocked (the street stays readable), every row leaves
+-- a way through without breaking anything, and coin lines guide you through
+-- the gaps.
 local function obstacleRows(ctx: Ctx, d0: number, d1: number, kinds: { [string]: number }, skipLanes: { [number]: boolean }?)
 	local rng = ctx.rng
 	local skip = skipLanes or {}
@@ -437,10 +411,10 @@ local function obstacleRows(ctx: Ctx, d0: number, d1: number, kinds: { [string]:
 	if #open == 0 then
 		return
 	end
-	local spacing = Util.Lerp(55, 32, ctx.difficulty)
+	local spacing = Util.Lerp(80, 50, ctx.difficulty)
 	local d = d0
 	while d <= d1 do
-		local freeChance = Util.Lerp(0.6, 0.3, ctx.difficulty)
+		local freeChance = Util.Lerp(0.7, 0.45, ctx.difficulty)
 		local row: { [number]: string? } = {}
 		local passable = 0
 		local blocks = 0
@@ -486,7 +460,7 @@ local function maybePickups(ctx: Ctx)
 	local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
 	if ctx.rng:NextNumber() < Config.PowerUps.SpawnChancePerSegment then
 		powerUp(ctx, lane, EDGE * 0.5)
-	elseif ctx.rng:NextNumber() < 0.15 then
+	elseif ctx.rng:NextNumber() < Config.PowerUps.MysteryBoxChancePerSegment then
 		mysteryBox(ctx, lane, EDGE * 0.5)
 	end
 end
@@ -513,7 +487,7 @@ local function define(def: SegmentDef)
 	table.insert(defs, def)
 end
 
--- The bread and butter: barriers to jump, signs to roll under, crates to smash.
+-- The bread and butter: barriers to jump, crates to smash.
 define({
 	name = "Street",
 	weight = 10,
@@ -522,7 +496,7 @@ define({
 	build = function(ctx)
 		streetFloor(ctx)
 		cityScenery(ctx)
-		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { Barricade = 4, OverheadSign = 3, Crates = 2, SteelBarrier = 1 })
+		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { Barricade = 4, Crates = 2, SteelBarrier = 2 })
 		maybePickups(ctx)
 	end,
 })
@@ -555,15 +529,15 @@ define({
 		local extraBus = false
 		for _, lane in LANE_IDS do
 			-- One more bus at most, so there's always a lane on the road.
-			if lane ~= roofLane and not extraBus and rng:NextNumber() < 0.4 then
+			if lane ~= roofLane and not extraBus and rng:NextNumber() < 0.3 then
 				Segments.Obstacle(ctx, "Bus", lane, start + rng:NextNumber(0, 30))
 				skip[lane] = true
 				extraBus = true
 			end
 		end
-		obstacleRows(ctx, start + 12, ctx.length - EDGE, { Barricade = 2, OverheadSign = 2 }, skip)
+		obstacleRows(ctx, start + 12, ctx.length - EDGE, { Barricade = 2, SteelBarrier = 1 }, skip)
 		-- Sometimes the boost is right there before the buses.
-		if rng:NextNumber() < 0.35 then
+		if rng:NextNumber() < Config.PowerUps.BoostBeforeTallChance then
 			powerUp(ctx, roofLane, EDGE * 0.5, nil, "SuperSneakers")
 		else
 			maybePickups(ctx)
@@ -622,32 +596,12 @@ define({
 		end
 		-- Inside: low obstacles only.
 		obstacleRows(ctx, d0 + 10, d1 - 6, { Barricade = 3, SteelBarrier = 2, Crates = 2 })
-		obstacleRows(ctx, d1 + 14, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
-		if rng:NextNumber() < 0.35 then
+		obstacleRows(ctx, d1 + 14, ctx.length - EDGE, { Barricade = 1 })
+		if rng:NextNumber() < Config.PowerUps.BoostBeforeTallChance then
 			powerUp(ctx, LANE_IDS[rng:NextInteger(1, 3)], EDGE * 0.5, nil, "SuperSneakers")
 		else
 			maybePickups(ctx)
 		end
-	end,
-})
-
--- Road works: scaffolding beams to roll under, barriers to jump.
-define({
-	name = "RoadWorks",
-	weight = 4,
-	minDistance = 250,
-	cooldown = 2,
-	build = function(ctx)
-		streetFloor(ctx)
-		cityScenery(ctx)
-		for _, side in { -1, 1 } do
-			for d = 10, ctx.length - 10, 20 do
-				scenery(ctx, { Name = "Cone", Size = Vector3.new(1, 1.6, 1), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 - 0.8), 0.8, d), Color = Color3.fromRGB(255, 120, 0) })
-			end
-		end
-		sideSign(ctx, 8, "🚧 ROAD WORKS", Color3.fromRGB(255, 140, 0))
-		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { SteelBarrier = 3, OverheadPipe = 3, Crates = 1 })
-		maybePickups(ctx)
 	end,
 })
 
@@ -690,7 +644,7 @@ define({
 		end
 		coinLine(ctx, 0, vaultStart + 6, vaultEnd - 6)
 		mysteryBox(ctx, 0, (vaultStart + vaultEnd) / 2)
-		obstacleRows(ctx, vaultStart + 14, vaultEnd, { Barricade = 2, OverheadSign = 2, Crates = 1 }, { [0] = true })
+		obstacleRows(ctx, vaultStart + 14, vaultEnd, { Barricade = 2, Crates = 1 }, { [0] = true })
 		Segments.Obstacle(ctx, "Crates", if ctx.rng:NextNumber() < 0.5 then -1 else 1, vaultStart)
 	end,
 })
@@ -742,7 +696,7 @@ define({
 			local bonus = brainrot.bonus * MutationData.Multiplier(mutation and mutation.id)
 			ModelFactory.NameTag(model, ("🔓 RESCUE %s %s  (+%dx)"):format(brainrot.icon, string.upper(MutationData.Label(key)), bonus), color, 12)
 			coinLine(ctx, lane, d - 32, d - 8)
-			obstacleRows(ctx, d + 16, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
+			obstacleRows(ctx, d + 16, ctx.length - EDGE, { Barricade = 1 })
 		end
 	end,
 })

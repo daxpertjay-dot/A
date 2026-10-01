@@ -8,7 +8,6 @@
 --                        \
 --                         🧍 PLAYER  →→→ track
 
-local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
@@ -123,12 +122,7 @@ function RunCamera.Stop()
 	camera = workspace.CurrentCamera
 	camera.CameraType = Enum.CameraType.Custom
 	camera.FieldOfView = 70
-	-- Point the normal camera back at the (usually brand new) character.
-	local character = Players.LocalPlayer.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if humanoid then
-		camera.CameraSubject = humanoid
-	end
+	-- Main.client points the camera at the fresh lobby character once it exists.
 end
 
 return RunCamera

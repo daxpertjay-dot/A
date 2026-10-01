@@ -88,7 +88,7 @@ Playing well builds a combo that multiplies your multiplier, from x1.0 up to **x
 
 | Trick | Stacks |
 |---|---|
-| Clear an obstacle (jump over / roll under) | +1 |
+| Clear an obstacle (jump over it) | +1 |
 | **Near miss**: change lanes just before hitting something (within 0.5s) | +2 |
 | **Roof run**: land on a bus or tunnel roof | +2 |
 | Smash something / crash through a wall | +1 / +2 |
@@ -137,22 +137,25 @@ Rescues are kept even if you get caught. Your best Brainrots automatically take 
 | 👟 Super Sneakers | huge jumps: **onto buses and tunnel roofs** | 10s → 20s |
 | ✖️2 Score Booster | doubles your multiplier | 10s → 20s |
 
-A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It **boosts your jump** high enough for buses and tunnel roofs, and it saves you from one crash by breaking instead.
+A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It **boosts your jump** high enough for buses and tunnel roofs, and it saves you from one crash by breaking instead. On the board your character surfs: turned sideways, knees bent, arms out. To use a real animation instead, put its ID in `Config.Animations.Hoverboard`.
+
+Power-ups are deliberately rare, so each one feels like a moment:
+- A random one appears at the start of about 1 in 7 segments; otherwise there's sometimes a mystery box.
+- Super Sneakers sometimes wait just before buses and tunnels.
 
 ### The chase
 Crashes let **Verity** close in:
 - **Running into the front** of something you can't break stops you dead.
 - **Switching lanes into the side** of something (a bus beside you, a vault wall) bounces you back into your lane. You stumble, drop to 60% speed for a moment and lose half your combo, like in Subway Surfers.
 
-Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run. **BACK TO BASE** always gets you home, even if you died mid-run or during the "RUN STARTING…" fade.
+Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run. **Reviving sends out a 💥 shockwave** that blows away every structure around you (buses, walls, barriers, from 45 studs behind to 110 ahead), so you never come back to life staring at a bus. **BACK TO BASE** always gets you home, even if you died mid-run or during the "RUN STARTING…" fade.
 
 ### The track: Brainrot City streets
 You run down the middle of the road at sunset, with shops and apartment blocks on both sides. Sections:
 
-- **Streets**: barriers to jump, signs to roll under, crates to smash.
+- **Streets**: barriers to jump, crates to smash. Rows are well spaced, and often only one or two lanes are blocked.
 - **🚌 Buses**: switch lanes around them.
 - **🚇 Underpasses**: run straight through.
-- **Road works**: scaffolding beams to roll under, barriers to jump.
 - **Smash zones**: wooden walls.
 - **Bonus vaults** and **rescue cages**.
 
@@ -172,7 +175,25 @@ Verity is a big angry Brainrot guy: a giant pink brain with a mustache, a top ha
 With the 🚀 Jetpack your character flies Superman-style: tipped forward, one fist out, with a flaming jetpack on your back. To use a real animation instead, put its ID in `Config.Animations.Fly`.
 
 ### Lobby & your base
-- The lobby is a blocky street with a conveyor loop, an ⬆️ Upgrades stall, a shop, daily rewards, the leaderboard, and a statue of Verity (WANTED).
+- The lobby is a blocky street with a conveyor loop, an ⬆️ Upgrades stall, a shop, daily rewards, the leaderboard, and a statue of Verity (WANTED). Palms, trees, bushes and rocks line the grass around the plots.
+- **Stud texture**: the square studs on every face, the Steal a Brainrot / Grow a Garden look. Turn it on in three steps:
+  1. Upload `assets/StudTexture.png` in Studio (**Asset Manager → Import**).
+  2. Copy its asset ID.
+  3. Paste it into `Config.Lobby.StudTexture` (for example `"rbxassetid://1234567890"`).
+
+  It's a transparent overlay, so every part keeps its own colour. Until you set it, parts use Roblox's classic round studs. To change the look, edit and re-run `tools/make_stud_texture.py`.
+- **Your own models**: make a folder named `LobbyProps` in **ServerStorage** and put Models in it named after a prop kind. They replace the blocky stand-ins everywhere that kind is placed:
+
+  | Model name | Where it goes |
+  |---|---|
+  | `Tree` | down the hub strip, and on the grass around the plots |
+  | `PalmTree` | on the grass around the plots, and at both ends of the street |
+  | `Bush` | the 4 corners of every base, and around the map |
+  | `Rock` | on the grass around the plots |
+  | `Flowers` | the flower beds in the middle of the street |
+  | `Lamp` | down the hub strip |
+
+  Each model is stood on the ground by its bounding box, turned randomly and anchored. Build them about the size of the blocky versions: trees roughly 14 studs tall, bushes 3–4 studs.
 - Your base has:
   - your pedestals, with a big **SCORE MULTIPLIER** sign (showing Hype too), with each Brainrot's level above it; locked pedestals can be bought right there
   - your high score
@@ -185,6 +206,9 @@ With the 🚀 Jetpack your character flies Superman-style: tipped forward, one f
 ## Project layout
 
 ```
+assets/StudTexture.png         the lobby's stud texture (upload it; see "Lobby & your base")
+tools/make_stud_texture.py     draws that texture
+tests/                         headless tests (tests/run.sh)
 src/
 ├── shared/                    ReplicatedStorage.Shared
 │   ├── Config.luau            ← all tuning: villain, score, levels, combo, Hype, coins, power-ups, speeds, camera
@@ -222,4 +246,5 @@ src/
 - **The villain**: rename him in `Config.Villain`, or drop in your own `VerityModel` (see above).
 - **Robux products**: put developer product IDs in `Config.DeveloperProducts` (coin packs, revive, hoverboards).
 - **Sounds**: add asset IDs to `Config.Sounds`.
-- **Animations**: swap run/jump animation IDs in `Config.Animations`.
+- **Animations**: swap run/jump animation IDs in `Config.Animations`, or add flight and hoverboard animations there.
+- **Lobby look**: the stud texture ID in `Config.Lobby.StudTexture` and your models in `ServerStorage.LobbyProps` (see above).

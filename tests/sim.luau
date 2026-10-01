@@ -179,11 +179,13 @@ while frames < 60 * 90 and not caught do
 			if kind == "Jump" then InputController.Action:Fire("Jump"); jumps += 1; cooldown = 20
 			elseif kind == "Roll" then InputController.Action:Fire("Roll"); rolls += 1; cooldown = 20
 			else
-				for _, dir in { -1, 1 } do
+				-- Head for the nearest lane that isn't blocked (one step at a time).
+				for _, dir in { -1, 1, -2, 2 } do
 					local target = st.lane + dir
 					if target >= -1 and target <= 1 then
 						local o2 = obstacleAhead(target, st.d - 4, st.d + lead + 6)
-						if not o2 or o2:GetAttribute("ObstacleType") ~= "Block" then
+						local between = if math.abs(dir) == 2 then obstacleAhead(st.lane + dir // 2, st.d - 4, st.d + 8) else nil
+						if (not o2 or o2:GetAttribute("ObstacleType") ~= "Block") and not between then
 							InputController.Action:Fire(dir < 0 and "Left" or "Right"); switches += 1; cooldown = 12
 							break
 						end
@@ -212,6 +214,6 @@ for k, v in outcomes do print("impact", k, v) end
 for k, v in sent do print("sent", k, v) end
 for k, v in styles do print("trick", k, v) end
 assert(st.meters > 2000, "the bot should get well past 2km")
-assert((styles.Clear or 0) > 10, "tricks are spotted")
+assert((styles.Clear or 0) + (styles.NearMiss or 0) > 10, "tricks are spotted")
 print("SIM OK")
 process.exit(0)

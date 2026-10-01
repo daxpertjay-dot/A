@@ -26,6 +26,10 @@ will play, rebuild the .rbxl and send it to them.
 - `src/client` → StarterPlayerScripts.Client: `RunController` (movement,
   collisions, tricks), `RunCamera`, `Chaser`, `UI/*`, `Main.client` (lobby ⇄ run flow).
 - `tests/` → Lune harness and tests (see below).
+- `assets/StudTexture.png` (drawn by `tools/make_stud_texture.py`) is the
+  lobby's stud texture. The user uploads it; its id goes in
+  `Config.Lobby.StudTexture`. There is no Roblox network access from here,
+  so never guess asset ids.
 
 ## Conventions
 

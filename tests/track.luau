@@ -9,10 +9,17 @@ local ModelFactory = req(H.shared.ModelFactory)
 local v = ModelFactory.Villain(1); v:PivotTo(H.CFrame.new(0, 0, 0)); print("villain parts", #v:GetChildren())
 
 local LobbyBuilder = req(H.server.Lobby.LobbyBuilder)
+-- Build the lobby with the square stud texture switched on.
+local Config = req(H.shared.Config)
+Config.Lobby.StudTexture = "rbxassetid://1"
 local lobby = LobbyBuilder.Build()
 local PlotManager = req(H.server.Lobby.PlotManager)
 PlotManager.Init()
-print("lobby parts", count(lobby, isPart), "prompts", count(lobby, function(d) return d:IsA("ProximityPrompt") end))
+local textures = count(lobby, function(d) return d:IsA("Texture") end)
+print("lobby parts", count(lobby, isPart), "prompts", count(lobby, function(d) return d:IsA("ProximityPrompt") end), "stud textures", textures)
+assert(textures > 1000, "lobby parts get the stud texture")
+local grass = lobby:FindFirstChild("Grass") :: any
+assert(grass and grass:FindFirstChild("Studs") and grass.TopSurface == H.Enum.SurfaceType.Smooth, "textured parts drop the classic studs")
 
 local TrackGenerator = req(H.server.Run.TrackGenerator)
 local track = TrackGenerator.new(H.Instance.new("Folder"), H.Vector3.new(6000, 0, 0), 42)
@@ -52,6 +59,11 @@ assert(stats.segments > 100, "track keeps generating")
 assert(stats.coins / stats.segments > 8, "enough coins per segment")
 assert((stats.Buses or 0) > 0 and (stats.Tunnel or 0) > 0 and (stats.Rescue or 0) > 0, "all segment types appear")
 assert(stats.parts / stats.segments < 200, "segments stay light")
+assert(stats.obstacles / stats.segments < 5, "the street isn't cluttered")
+assert(not stats.RoadWorks, "road works (roll-under beams) are gone")
+local powerups = 0
+for _, n in stats.powerups do powerups += n end
+assert(powerups / stats.segments < 0.3, "power-ups aren't too common")
 -- Mutation odds over many rolls
 local MutationData = req(H.shared.MutationData)
 local rng = H.Random.new(7)

@@ -108,7 +108,7 @@ local function leaveRun()
 	task.delay(5, function()
 		if inRun then
 			backToLobby()
-			Remotes.Event("GoToBase"):FireServer()
+			Remotes.Event("GoToBase"):FireServer("Respawn")
 		end
 	end)
 end
@@ -183,6 +183,53 @@ Remotes.Event("RunEnded").OnClientEvent:Connect(function(results)
 	RunHUD.ShowResults(results)
 end)
 
+-- A character we can play with in the lobby: in the world, alive, and not
+-- the one we just finished a run with (that one is frozen and about to be
+-- replaced).
+local function liveCharacter(): (Model?, Humanoid?)
+	local character = player.Character
+	if not character or not character:IsDescendantOf(workspace) or character:GetAttribute("RunFinished") then
+		return nil, nil
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return nil, nil
+	end
+	return character, humanoid
+end
+
+-- Points the normal camera at the lobby character, waiting for the fresh
+-- one to spawn if needed. If none turns up, ask the server to respawn us
+-- (otherwise you'd be left staring at the sky).
+local followToken = 0
+local function followCharacter()
+	followToken += 1
+	local token = followToken
+	task.spawn(function()
+		local deadline = os.clock() + 6
+		local character, humanoid = liveCharacter()
+		while not humanoid and os.clock() < deadline and token == followToken do
+			task.wait(0.1)
+			character, humanoid = liveCharacter()
+		end
+		if token ~= followToken or inRun then
+			return
+		end
+		local camera = workspace.CurrentCamera
+		camera.CameraType = Enum.CameraType.Custom
+		if humanoid and character then
+			camera.CameraSubject = humanoid
+			local rootPart = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if rootPart then
+				camera.CFrame = CFrame.lookAt(rootPart.Position + Vector3.new(0, 8, 14), rootPart.Position)
+			end
+		else
+			warn("[BrainrotRunner] no character after returning to the lobby; asking for a respawn")
+			Remotes.Event("GoToBase"):FireServer("Respawn")
+		end
+	end)
+end
+
 function backToLobby()
 	inRun = false
 	RunController.Stop()
@@ -196,12 +243,13 @@ function backToLobby()
 	if c then
 		c:Enable()
 	end
+	followCharacter()
 end
 
 Remotes.Event("ReturnedToLobby").OnClientEvent:Connect(backToLobby)
 
--- If the character respawns mid-run (reset, etc.) make sure lobby controls come back
--- once the server has ended the run.
+-- A fresh character in the lobby (back from a run, or a respawn): make sure
+-- the lobby camera and controls are on it.
 player.CharacterAdded:Connect(function()
 	if not inRun then
 		backToLobby()

@@ -12,6 +12,7 @@
 --        [plot] [plot] [plot] [plot]          ← side +1 (east)
 
 local CollectionService = game:GetService("CollectionService")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
@@ -57,18 +58,90 @@ local function at(x: number, y: number, z: number): Vector3
 	return ORIGIN + Vector3.new(x, y, z)
 end
 
--- Every lobby part gets the classic stud look unless told otherwise.
+-- ───────────────────────────── studs ─────────────────────────────
+
+local STUD_FACES = { Enum.NormalId.Top, Enum.NormalId.Front, Enum.NormalId.Back, Enum.NormalId.Left, Enum.NormalId.Right }
+
+local function faceSize(size: Vector3, face: Enum.NormalId): (number, number)
+	if face == Enum.NormalId.Top or face == Enum.NormalId.Bottom then
+		return size.X, size.Z
+	elseif face == Enum.NormalId.Front or face == Enum.NormalId.Back then
+		return size.X, size.Y
+	end
+	return size.Z, size.Y
+end
+
+-- The square stud texture on every visible face big enough to show it
+-- (the bottom is never seen). The image is a transparent overlay, so the
+-- part's own colour shows through.
+local function studTexture(p: BasePart)
+	if p.Transparency >= 1 or p.Material == Enum.Material.Neon then
+		return
+	end
+	if p:IsA("Part") and (p :: Part).Shape ~= Enum.PartType.Block then
+		return
+	end
+	for _, face in STUD_FACES do
+		local u, v = faceSize(p.Size, face)
+		if u >= 1 and v >= 1 then
+			local texture = Instance.new("Texture")
+			texture.Name = "Studs"
+			texture.Texture = L.StudTexture
+			texture.Face = face
+			texture.StudsPerTileU = L.StudTextureSize
+			texture.StudsPerTileV = L.StudTextureSize
+			texture.Parent = p
+		end
+	end
+end
+
+-- Every lobby part gets the stud look unless told otherwise: the square
+-- stud texture if one is set up (Config.Lobby.StudTexture), otherwise
+-- Roblox's classic round studs.
 local function part(props: Util.PartProps): BasePart
 	props.Parent = props.Parent or lobby
-	if props.Studs == nil then
-		props.Studs = L.UseStuds
-	end
+	local studs = if props.Studs == nil then L.UseStuds else props.Studs
+	local textured = studs and L.StudTexture ~= ""
+	props.Studs = studs and not textured
 	if props.Material == nil then
-		props.Material = Enum.Material.Plastic
+		props.Material = if textured then Enum.Material.SmoothPlastic else Enum.Material.Plastic
 	end
-	return Util.Part(props)
+	local p = Util.Part(props)
+	if textured then
+		studTexture(p)
+	end
+	return p
 end
 LobbyBuilder.Part = part
+
+-- ───────────────────────────── your models ─────────────────────────────
+
+-- Places your own model of `kind` (ServerStorage.LobbyProps.<kind>) standing
+-- on the ground at `position`. Returns false when there isn't one, so the
+-- caller builds its blocky stand-in instead.
+function LobbyBuilder.Prop(kind: string, parent: Instance, position: Vector3, scale: number?): boolean
+	local folder = ServerStorage:FindFirstChild(L.PropsFolder)
+	local template = folder and folder:FindFirstChild(kind)
+	if not template or not template:IsA("Model") then
+		return false
+	end
+	local model = template:Clone()
+	if scale and scale ~= 1 then
+		model:ScaleTo(model:GetScale() * scale)
+	end
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+		end
+	end
+	-- Stand it on the ground: put the bottom of its bounding box at `position`.
+	local pivot = model:GetPivot()
+	local box, size = model:GetBoundingBox()
+	local pivotAboveBottom = pivot.Position.Y - (box.Position.Y - size.Y / 2)
+	model:PivotTo(CFrame.new(position + Vector3.new(0, pivotAboveBottom, 0)) * CFrame.Angles(0, rng:NextNumber(0, math.pi * 2), 0) * pivot.Rotation)
+	model.Parent = parent
+	return true
+end
 
 local function tag(instance: Instance, tagName: string, attrs: { [string]: any }?)
 	CollectionService:AddTag(instance, tagName)
@@ -107,15 +180,40 @@ function LobbyBuilder.Sign(parent: Instance, position: Vector3, facing: Vector3,
 	return Util.SurfaceLabel(face, Enum.NormalId.Front, text, { TextColor = color, PixelsPerStud = 24 })
 end
 
--- Blocky tree: a trunk and a few leafy cubes.
-function LobbyBuilder.Tree(parent: Instance, position: Vector3, scale: number?)
+-- Blocky tree: a trunk and a few leafy cubes (or your "Tree" model).
+function LobbyBuilder.Tree(parent: Instance, position: Vector3, scale: number?, kind: string?)
+	if LobbyBuilder.Prop(kind or "Tree", parent, position) then
+		return
+	end
 	local s = scale or 1
 	part({ Parent = parent, Name = "Trunk", Size = Vector3.new(2, 7, 2) * s, CFrame = CFrame.new(position + Vector3.new(0, 3.5 * s, 0)), Color = COLORS.Wood })
 	part({ Parent = parent, Name = "Leaves", Size = Vector3.new(8, 5, 8) * s, CFrame = CFrame.new(position + Vector3.new(0, 9 * s, 0)), Color = COLORS.Leaves })
 	part({ Parent = parent, Name = "Leaves", Size = Vector3.new(5, 3, 5) * s, CFrame = CFrame.new(position + Vector3.new(0, 12.5 * s, 0)), Color = COLORS.GrassDark })
 end
 
+-- A blocky bush: a few green cubes (or your "Bush" model).
+function LobbyBuilder.Bush(parent: Instance, position: Vector3)
+	if LobbyBuilder.Prop("Bush", parent, position) then
+		return
+	end
+	part({ Parent = parent, Name = "Bush", Size = Vector3.new(4, 3, 4), CFrame = CFrame.new(position + Vector3.new(0, 1.5, 0)), Color = COLORS.Leaves })
+	part({ Parent = parent, Name = "Bush", Size = Vector3.new(3, 2, 3), CFrame = CFrame.new(position + Vector3.new(1.6, 1, 1.2)), Color = COLORS.GrassDark })
+end
+
+-- A blocky rock (or your "Rock" model).
+function LobbyBuilder.Rock(parent: Instance, position: Vector3)
+	if LobbyBuilder.Prop("Rock", parent, position) then
+		return
+	end
+	local grey = Color3.fromRGB(140, 140, 150)
+	part({ Parent = parent, Name = "Rock", Size = Vector3.new(4, 2.4, 3), CFrame = CFrame.new(position + Vector3.new(0, 1.2, 0)) * CFrame.Angles(0, rng:NextNumber(0, math.pi), 0), Color = grey })
+	part({ Parent = parent, Name = "Rock", Size = Vector3.new(2, 1.4, 2), CFrame = CFrame.new(position + Vector3.new(2.2, 0.7, 0.6)), Color = grey:Lerp(Color3.new(0, 0, 0), 0.15) })
+end
+
 function LobbyBuilder.Lamp(parent: Instance, position: Vector3)
+	if LobbyBuilder.Prop("Lamp", parent, position) then
+		return
+	end
 	part({ Parent = parent, Name = "LampPost", Size = Vector3.new(1, 12, 1), CFrame = CFrame.new(position + Vector3.new(0, 6, 0)), Color = Color3.fromRGB(50, 50, 60) })
 	local bulb = part({ Parent = parent, Name = "LampBulb", Size = Vector3.new(2.4, 2.4, 2.4), CFrame = CFrame.new(position + Vector3.new(0, 13, 0)), Color = Color3.fromRGB(255, 240, 170), Material = Enum.Material.Neon, Studs = false })
 	local light = Instance.new("PointLight")
@@ -290,9 +388,11 @@ local function buildHub()
 		end
 	end
 	for i, z in { -75, 25, 80, 120 } do
-		local bed = part({ Name = "FlowerBed", Size = Vector3.new(10, 1.4, 6), CFrame = CFrame.new(at(0, 1.5, z)), Color = COLORS.Wood })
-		for f = -2, 2 do
-			part({ Name = "Flower", Size = Vector3.new(1.2, 1.2, 1.2), CFrame = bed.CFrame * CFrame.new(f * 1.8, 1.3, (f % 2) * 1.5 - 0.7), Color = COLORS.Bright[(i + f) % #COLORS.Bright + 1], Studs = false })
+		if not LobbyBuilder.Prop("Flowers", lobby, at(0, 0.8, z)) then
+			local bed = part({ Name = "FlowerBed", Size = Vector3.new(10, 1.4, 6), CFrame = CFrame.new(at(0, 1.5, z)), Color = COLORS.Wood })
+			for f = -2, 2 do
+				part({ Name = "Flower", Size = Vector3.new(1.2, 1.2, 1.2), CFrame = bed.CFrame * CFrame.new(f * 1.8, 1.3, (f % 2) * 1.5 - 0.7), Color = COLORS.Bright[(i + f) % #COLORS.Bright + 1], Studs = false })
+			end
 		end
 	end
 
@@ -318,6 +418,44 @@ local function buildHub()
 		})
 		tag(p, "LobbyFloat", { Phase = rng:NextNumber(0, 6), Amplitude = rng:NextNumber(2, 5) })
 		tag(p, "LobbySpin", { Speed = rng:NextNumber(0.2, 0.6) })
+	end
+end
+
+-- Trees, palms, bushes and rocks on the grass around the outside of the
+-- plots. Each one is your own model when you've made one (see LobbyProps).
+local function buildScenery()
+	local half = LobbyBuilder.StreetLength() / 2
+	local outer = L.StreetHalfWidth + L.PlotDepth + 30
+	local i = 0
+	for z = -half - 40, half + 40, 26 do
+		for _, side in { -1, 1 } do
+			i += 1
+			local x = side * (outer - rng:NextNumber(8, 18))
+			local spot = at(x, 0, z + rng:NextNumber(-6, 6))
+			local roll = i % 4
+			if roll == 0 then
+				LobbyBuilder.Tree(lobby, spot, 1, "PalmTree")
+			elseif roll == 1 then
+				LobbyBuilder.Tree(lobby, spot, 1.1)
+			elseif roll == 2 then
+				LobbyBuilder.Bush(lobby, spot)
+			else
+				LobbyBuilder.Rock(lobby, spot)
+			end
+		end
+	end
+	-- Along the far ends of the street
+	for _, zSide in { -1, 1 } do
+		for x = -outer + 20, outer - 20, 30 do
+			if math.abs(x) > L.StreetHalfWidth + 6 then
+				local spot = at(x + rng:NextNumber(-5, 5), 0, zSide * (half + 45))
+				if rng:NextNumber() < 0.5 then
+					LobbyBuilder.Bush(lobby, spot)
+				else
+					LobbyBuilder.Tree(lobby, spot, 1, "PalmTree")
+				end
+			end
+		end
 	end
 end
 
@@ -348,6 +486,7 @@ function LobbyBuilder.Build(): Folder
 	buildConveyors()
 	buildHub()
 	buildPublicGate()
+	buildScenery()
 	return lobby
 end
 

@@ -514,6 +514,29 @@ end
 
 -- ───────────────────────────── caught / revive / end ─────────────────────────────
 
+-- Revive shockwave: every obstacle near the runner is blown away, so you
+-- never come back to life staring at a bus.
+local function clearAround(run: Run): number
+	local from = run.d - Config.Economy.ReviveClearBehind
+	local to = run.d + Config.Economy.ReviveClearAhead
+	local root = rootOf(run.player)
+	local center = if root then root.Position else run.origin + Vector3.new(0, 3, -run.d)
+	local targets = {}
+	for _, d in run.track.folder:GetDescendants() do
+		local trackD = d:GetAttribute("TrackD")
+		if type(trackD) == "number" and trackD >= from and trackD <= to and d:GetAttribute("ObstacleType") and not d:GetAttribute("Destroyed") then
+			table.insert(targets, d)
+		end
+	end
+	local cleared = 0
+	for _, obstacle in targets do
+		if Destruction.Obliterate(obstacle, center, run.player, 140) then
+			cleared += 1
+		end
+	end
+	return cleared
+end
+
 local function reviveCost(run: Run): number
 	return Config.Economy.ReviveBaseCost * 2 ^ run.revives
 end
@@ -559,7 +582,8 @@ function RunManager.Revive(player: Player, paidWithRobux: boolean?): boolean
 	end
 	run.revives += 1
 	run.phase = "Running"
-	Remotes.Event("RunRevived"):FireClient(player)
+	local cleared = clearAround(run)
+	Remotes.Event("RunRevived"):FireClient(player, { cleared = cleared, at = run.d })
 	return true
 end
 

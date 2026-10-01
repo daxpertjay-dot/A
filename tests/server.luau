@@ -127,6 +127,20 @@ if wall then local cf = wall:GetBoundingBox(); root.CFrame = cf; handlers.Report
 handlers.ReportCaught(player)
 print("caught info", clientEvents.RunCaught[1].cost, clientEvents.RunCaught[1].score)
 handlers.ChooseRevive(player, "Coins")
+-- Revive shockwave: nothing left standing around the runner.
+local revived = assert(clientEvents.RunRevived, "revived")[1]
+local RunsFolder = prep.trackFolder
+local standing = 0
+local reviveD = revived.at
+for _, d in RunsFolder:GetDescendants() do
+	local td = d:GetAttribute("TrackD")
+	if td and d:GetAttribute("ObstacleType") and not d:GetAttribute("Destroyed") and td > reviveD - 30 and td < reviveD + 90 then
+		standing += 1
+		print("  still standing:", d:GetAttribute("Kind"), td)
+	end
+end
+print(("revive shockwave cleared %d structures; %d still standing near the runner"):format(revived.cleared, standing))
+assert(standing == 0, "revive clears the structures around you")
 handlers.ReportCaught(player)
 handlers.ChooseRevive(player, false)
 local r = clientEvents.RunEnded[1]
@@ -165,6 +179,12 @@ clientEvents.ReturnedToLobby = nil
 handlers.LeaveResults(player)
 print("left mid-run:", clientEvents.ReturnedToLobby ~= nil, "running", RunManager.IsRunning(player), "runs counted", profile.Stats.TotalRuns - runsBefore)
 assert(clientEvents.ReturnedToLobby and not RunManager.IsRunning(player))
+-- 🏠 / client fallback: asking for a respawn in the lobby reloads the character.
+local loadsBefore = loadCount
+handlers.GoToBase(player, "Respawn")
+assert(loadCount == loadsBefore + 1, "Respawn request reloads the character")
+handlers.GoToBase(player, "Respawn")
+assert(loadCount == loadsBefore + 1, "respawn requests are rate limited")
 -- BACK TO BASE with no run on the server at all still works.
 task.wait(2.1)
 clientEvents.ReturnedToLobby = nil

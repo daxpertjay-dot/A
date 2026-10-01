@@ -26,6 +26,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
@@ -152,6 +153,9 @@ local function loadAnimations(hum: Humanoid)
 	local set = table.clone(if hum.RigType == Enum.HumanoidRigType.R6 then ANIMS.R6 else ANIMS.R15) :: { [string]: string }
 	if ANIMS.Fly ~= "" then
 		set.Fly = ANIMS.Fly
+	end
+	if ANIMS.Hoverboard ~= "" then
+		set.Hoverboard = ANIMS.Hoverboard
 	end
 	for name, id in set do
 		local anim = Instance.new("Animation")
@@ -696,25 +700,95 @@ local function setJetpackVisible(visible: boolean)
 	end
 end
 
--- Superman pose: one fist out in front, the other arm back, legs trailing.
--- (Used unless Config.Animations.Fly has an animation id.)
-local function poseFlying(active: boolean)
-	local r15 = humanoid and humanoid.RigType == Enum.HumanoidRigType.R15
-	local function set(name: string, cf: CFrame)
-		local j = joints[name]
-		if j then
-			j.Transform = if active then cf else CFrame.identity
+-- Built-in poses, held by setting joint Transforms every frame (with the
+-- other animations stopped). Used unless Config.Animations has an id for
+-- them. R15 joint frames line up with the character (X pitch, Y yaw, Z roll);
+-- R6 limb joints are turned 90° so their axes differ.
+local rad = math.rad
+local POSES: { [string]: { R15: { [string]: CFrame }, R6: { [string]: CFrame } } } = {
+	-- 🚀 Superman: one fist out in front, the other arm back, legs trailing.
+	Fly = {
+		R15 = {
+			RightShoulder = CFrame.Angles(rad(170), 0, 0),
+			LeftShoulder = CFrame.Angles(rad(-25), 0, rad(-8)),
+			RightHip = CFrame.Angles(rad(-12), 0, 0),
+			LeftHip = CFrame.Angles(rad(8), 0, 0),
+		},
+		R6 = {
+			["Right Shoulder"] = CFrame.Angles(0, 0, rad(170)),
+			["Left Shoulder"] = CFrame.Angles(0, 0, rad(25)),
+		},
+	},
+	-- 🛹 Surf stance: body turned sideways on the board (the root is turned
+	-- too, see BOARD_YAW), upper body and head twisted back to face forward,
+	-- knees bent, arms out for balance.
+	Board = {
+		R15 = {
+			Waist = CFrame.Angles(0, rad(-35), 0),
+			Neck = CFrame.Angles(0, rad(-20), 0),
+			RightShoulder = CFrame.Angles(0, 0, rad(70)),
+			LeftShoulder = CFrame.Angles(0, 0, rad(-70)),
+			RightElbow = CFrame.Angles(0, 0, rad(15)),
+			LeftElbow = CFrame.Angles(0, 0, rad(-15)),
+			RightHip = CFrame.Angles(rad(30), 0, rad(10)),
+			LeftHip = CFrame.Angles(rad(30), 0, rad(-10)),
+			RightKnee = CFrame.Angles(rad(-45), 0, 0),
+			LeftKnee = CFrame.Angles(rad(-45), 0, 0),
+		},
+		R6 = {
+			["Right Shoulder"] = CFrame.Angles(rad(-70), 0, 0),
+			["Left Shoulder"] = CFrame.Angles(rad(-70), 0, 0),
+			["Right Hip"] = CFrame.Angles(rad(-12), 0, 0),
+			["Left Hip"] = CFrame.Angles(rad(-12), 0, 0),
+		},
+	},
+}
+local BOARD_YAW = rad(55) -- surfing sideways
+local BOARD_CROUCH = 0.3 -- bent knees lower the hips
+
+local posedJoints: { [string]: boolean } = {}
+local currentPose: string? = nil
+
+-- Holds a built-in pose (nil releases every posed joint).
+local function applyPose(name: string?)
+	local r15 = humanoid ~= nil and (humanoid :: Humanoid).RigType == Enum.HumanoidRigType.R15
+	local pose = if name then (if r15 then POSES[name].R15 else POSES[name].R6) else {}
+	for jointName in posedJoints do
+		if not pose[jointName] then
+			local j = joints[jointName]
+			if j then
+				j.Transform = CFrame.identity
+			end
+			posedJoints[jointName] = nil
 		end
 	end
-	if r15 then
-		set("RightShoulder", CFrame.Angles(math.rad(170), 0, 0))
-		set("LeftShoulder", CFrame.Angles(math.rad(-25), 0, math.rad(-8)))
-		set("RightHip", CFrame.Angles(math.rad(-12), 0, 0))
-		set("LeftHip", CFrame.Angles(math.rad(8), 0, 0))
-	else
-		set("Right Shoulder", CFrame.Angles(0, 0, math.rad(170)))
-		set("Left Shoulder", CFrame.Angles(0, 0, math.rad(25)))
+	for jointName, cf in pose do
+		local j = joints[jointName]
+		if j then
+			j.Transform = cf
+			posedJoints[jointName] = true
+		end
 	end
+	currentPose = name
+end
+
+-- Plays the animation `trackName` if one is configured, otherwise holds the
+-- built-in pose `poseName`.
+local function animOrPose(trackName: string, poseName: string)
+	if tracks[trackName] then
+		if currentPose then
+			applyPose(nil)
+		end
+		playAnim(trackName)
+		return
+	end
+	if currentAnim ~= poseName then
+		for _, t in tracks do
+			t:Stop(0.1)
+		end
+		currentAnim = poseName
+	end
+	applyPose(poseName)
 end
 
 -- ───────────────────────────── main update ─────────────────────────────
@@ -738,9 +812,12 @@ local function applyCharacter(xVelocity: number)
 	end
 	local flying = state.move == "Flying"
 	local flyTilt = if flying then -1.15 else 0
-	local boardLift = if onBoard() then 0.8 else 0
+	-- Surfing: on the board, not flying or mid-roll.
+	local surfing = onBoard() and state.phase == "Running" and not flying and not isRolling()
+	local boardLift = if onBoard() then 0.8 - (if surfing then BOARD_CROUCH else 0) else 0
+	local yaw = if surfing then BOARD_YAW else 0
 	local pos = worldPosition() + Vector3.new(0, hipOffset - rollDrop + boardLift, 0)
-	rootPart.CFrame = CFrame.new(pos) * CFrame.Angles(rollPitch + stagger + flyTilt, 0, lean)
+	rootPart.CFrame = CFrame.new(pos) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(rollPitch + stagger + flyTilt, 0, lean)
 	rootPart.AssemblyLinearVelocity = Vector3.new(xVelocity, state.vy, -state.speed)
 	rootPart.AssemblyAngularVelocity = Vector3.zero
 
@@ -760,32 +837,20 @@ local function applyCharacter(xVelocity: number)
 
 	-- Animation selection
 	if state.phase ~= "Running" then
-		poseFlying(false)
+		applyPose(nil)
 		playAnim("Idle")
 	elseif flying then
-		if tracks.Fly then
-			playAnim("Fly")
-		else
-			-- No flight animation set: stop the others and hold the Superman pose.
-			if currentAnim ~= "FlyPose" then
-				for _, t in tracks do
-					t:Stop(0.1)
-				end
-				currentAnim = "FlyPose"
-			end
-			poseFlying(true)
-		end
+		animOrPose("Fly", "Fly")
+	elseif surfing then
+		-- Same stance on the ground and in the air: surfers don't run.
+		animOrPose("Hoverboard", "Board")
 	elseif not state.grounded then
-		if currentAnim == "FlyPose" then
-			poseFlying(false)
-		end
+		applyPose(nil)
 		if currentAnim ~= "Jump" then
 			playAnim("Jump")
 		end
 	else
-		if currentAnim == "FlyPose" then
-			poseFlying(false)
-		end
+		applyPose(nil)
 		playAnim("Run", math.clamp(state.speed / ANIMS.RunSpeedDivisor, 0.8, 2.4))
 	end
 end
@@ -991,6 +1056,30 @@ function RunController.Go()
 	end
 end
 
+-- A ring of light bursting out from the runner (the server blows away the
+-- structures around you at the same moment).
+local function shockwave()
+	local ball = Instance.new("Part")
+	ball.Name = "ReviveShockwave"
+	ball.Shape = Enum.PartType.Ball
+	ball.Size = Vector3.one * 4
+	ball.CFrame = CFrame.new(bodyCenter())
+	ball.Color = Color3.fromRGB(140, 255, 160)
+	ball.Material = Enum.Material.Neon
+	ball.Transparency = 0.2
+	ball.Anchored = true
+	ball.CanCollide = false
+	ball.CanQuery = false
+	ball.CanTouch = false
+	ball.CastShadow = false
+	ball.Parent = workspace
+	local tween = TweenService:Create(ball, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.one * 140, Transparency = 1 })
+	tween:Play()
+	tween.Completed:Once(function()
+		ball:Destroy()
+	end)
+end
+
 function RunController.Revive()
 	state.phase = "Running"
 	state.combo.stacks = 0
@@ -998,7 +1087,9 @@ function RunController.Revive()
 	state.invulnerableUntil = now() + C.RevivedInvulnerability
 	state.staggerTime = 0
 	state.speedFactor = 0.6
-	RunController.Event:Fire("💪 REVIVED!", Color3.fromRGB(140, 255, 140))
+	addShake(1.6)
+	shockwave()
+	RunController.Event:Fire("💪 REVIVED! 💥 SHOCKWAVE!", Color3.fromRGB(140, 255, 140))
 end
 
 -- Server-confirmed events.
@@ -1058,6 +1149,9 @@ function RunController.Stop()
 		rootPart.AssemblyLinearVelocity = Vector3.zero
 		rootPart.Anchored = true
 	end
+	if character then
+		character:SetAttribute("RunFinished", true) -- the lobby waits for the fresh one
+	end
 	InputController.SetEnabled(false)
 	for _, connection in connections do
 		connection:Disconnect()
@@ -1071,7 +1165,7 @@ function RunController.Stop()
 	trackFolder = nil
 	setBoardVisible(false)
 	setJetpackVisible(false)
-	poseFlying(false)
+	applyPose(nil)
 end
 
 -- World-space position of the runner (for the camera and the chaser).

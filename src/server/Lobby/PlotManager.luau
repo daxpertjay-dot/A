@@ -107,6 +107,11 @@ local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
 	local beam = part({ Parent = folder, Name = "ArchBeam", Size = Vector3.new(22, 4, 2), CFrame = cf * CFrame.new(0, y + 15, -D / 2), Color = color:Lerp(Color3.new(0, 0, 0), 0.25) })
 	local signLabel = Util.SurfaceLabel(beam, Enum.NormalId.Front, "EMPTY PLOT", { PixelsPerStud = 20 })
 
+	-- A bush in each corner (your "Bush" model if you've made one)
+	for _, corner in { Vector2.new(-1, -1), Vector2.new(1, -1), Vector2.new(-1, 1), Vector2.new(1, 1) } do
+		LobbyBuilder.Bush(folder, (cf * CFrame.new(corner.X * (W / 2 - 4), y, corner.Y * (D / 2 - 5))).Position)
+	end
+
 	-- ⭐ Big score multiplier sign facing the entrance
 	local multiplierLabel = LobbyBuilder.Sign(folder, (cf * CFrame.new(0, y + 9, -30)).Position, (cf * CFrame.new(0, y + 9, -60)).Position, "⭐ SCORE MULTIPLIER x1", Color3.fromRGB(255, 190, 0), 26, 5, 6.5)
 
@@ -323,7 +328,27 @@ function PlotManager.Init()
 		hookCharacter(player)
 	end
 
-	Remotes.Event("GoToBase").OnServerEvent:Connect(PlotManager.SendHome)
+	-- 🏠 MY BASE button, and the client's fallback when it has no usable
+	-- character after a run ("Respawn"): respawn if needed, otherwise just
+	-- teleport home.
+	local lastRespawn: { [Player]: number } = {}
+	Remotes.Event("GoToBase").OnServerEvent:Connect(function(player, request)
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local alive = humanoid ~= nil and humanoid.Health > 0 and character ~= nil and character:IsDescendantOf(workspace)
+		if (not alive or request == "Respawn") and not player:GetAttribute("InRun") then
+			local now = os.clock()
+			if (lastRespawn[player] or 0) < now then
+				lastRespawn[player] = now + 3
+				player:LoadCharacter() -- CharacterAdded sends them home
+			end
+			return
+		end
+		PlotManager.SendHome(player)
+	end)
+	Players.PlayerRemoving:Connect(function(player)
+		lastRespawn[player] = nil
+	end)
 end
 
 return PlotManager
