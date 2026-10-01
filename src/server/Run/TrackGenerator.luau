@@ -27,6 +27,7 @@ export type Track = typeof(setmetatable(
 		index: number,
 		lastUsed: { [string]: number },
 		lastName: string,
+		lastHeight: number,
 	},
 	TrackGenerator
 ))
@@ -73,6 +74,7 @@ function TrackGenerator.new(parent: Instance, origin: Vector3, seed: number): Tr
 		index = 0,
 		lastUsed = {},
 		lastName = "",
+		lastHeight = 0,
 	}, TrackGenerator)
 
 	self:_buildStartArea()
@@ -106,6 +108,8 @@ function TrackGenerator._buildStartArea(self: Track)
 		rng = self.rng,
 		difficulty = 0,
 		distance = 0,
+		height = 0,
+		prevHeight = 0,
 	})
 	table.insert(self.segments, { model = model, startD = -60, endD = length, name = "StartArea", index = 0 })
 	self.generatedUntil = length
@@ -143,7 +147,21 @@ function TrackGenerator._generateNext(self: Track)
 	local startD = self.generatedUntil
 	local distance = startD * Config.Run.MetersPerStud
 	local def = self:_choose(distance)
+	-- Roofs change height from building to building (ramps go up, drops go down).
+	local height = self.lastHeight
+	local roll = self.rng:NextNumber()
+	if roll < 0.2 then
+		height += 4
+	elseif roll < 0.32 then
+		height += 8
+	elseif roll < 0.55 then
+		height -= 4
+	elseif roll < 0.65 then
+		height -= 8
+	end
+	height = math.clamp(height, 0, 12)
 	local model = newSegmentModel(self.folder, def.name, self.index)
+	model:SetAttribute("RoofHeight", height)
 	def.build({
 		folder = model,
 		origin = self.origin,
@@ -152,7 +170,10 @@ function TrackGenerator._generateNext(self: Track)
 		rng = self.rng,
 		difficulty = math.clamp(distance / 4000, 0, 1),
 		distance = distance,
+		height = height,
+		prevHeight = self.lastHeight,
 	})
+	self.lastHeight = height
 	table.insert(self.segments, { model = model, startD = startD, endD = startD + Config.Run.SegmentLength, name = def.name, index = self.index })
 	self.lastUsed[def.name] = self.index
 	self.lastName = def.name

@@ -138,7 +138,7 @@ local function update()
 	chaseFill.Size = UDim2.fromScale(ratio, 1)
 	local danger = state.gap < Config.Chase.DangerGap
 	chaseFill.BackgroundColor3 = if danger then (if t % 0.3 < 0.15 then C.Bad else C.Gold) else C.Good
-	chaseLabel.Text = if danger then ("☣️ %s IS RIGHT BEHIND YOU!"):format(Config.Villain.Title) else ("☣️ %s"):format(Config.Villain.Title)
+	chaseLabel.Text = if danger then ("🧠 %s IS RIGHT BEHIND YOU!"):format(Config.Villain.Title) else ("🧠 %s"):format(Config.Villain.Title)
 
 	local timers = {
 		Jetpack = state.jetpackUntil,
@@ -343,7 +343,7 @@ function RunHUD.Init(playerGui: PlayerGui)
 	UIKit.Stroke(4, C.Bad).Parent = caughtPanel
 	UIKit.Padding(14).Parent = caughtPanel
 	UIKit.List(nil, 10).Parent = caughtPanel
-	UIKit.Label({ Text = ("☣️ %s CAUGHT YOU!"):format(Config.Villain.Title), TextColor3 = C.Bad, Size = UDim2.new(1, 0, 0, 36), LayoutOrder = 1, ZIndex = 11, Parent = caughtPanel })
+	UIKit.Label({ Text = ("🧠 %s CAUGHT YOU!"):format(Config.Villain.Title), TextColor3 = C.Bad, Size = UDim2.new(1, 0, 0, 36), LayoutOrder = 1, ZIndex = 11, Parent = caughtPanel })
 	caughtScore = UIKit.Label({ Text = "", Size = UDim2.new(1, 0, 0, 28), LayoutOrder = 2, ZIndex = 11, Parent = caughtPanel })
 	local timerTrack = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(30, 30, 40), Size = UDim2.new(0.8, 0, 0, 14), LayoutOrder = 3, ZIndex = 11, Parent = caughtPanel })
 	UIKit.Corner(7).Parent = timerTrack

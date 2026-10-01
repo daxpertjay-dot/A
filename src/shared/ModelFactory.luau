@@ -5,6 +5,7 @@
 -- for real meshes later by returning a cloned asset from ModelFactory.Brainrot.
 
 local BrainrotData = require(script.Parent.BrainrotData)
+local Config = require(script.Parent.Config)
 local Util = require(script.Parent.Util)
 
 local ModelFactory = {}
@@ -209,48 +210,67 @@ function ModelFactory.Brainrot(id: string, scale: number?): Model
 	return model
 end
 
--- The villain: a blocky evil scientist in a lab coat with glowing goggles,
--- wild hair and a giant net for catching Brainrots. Pivot at the feet,
--- facing -Z.
+-- Verity, the villain: a big Brainrot guy. A giant angry pink brain with a
+-- mustache and a tiny top hat, stomping around on sneakers with a net for
+-- catching Brainrots. Pivot at the feet, facing -Z.
+--
+-- Want your own Verity? Put a Model named Config.Villain.CustomModel (default
+-- "VerityModel") in ReplicatedStorage with its PrimaryPart at the feet,
+-- facing -Z, and it is used everywhere instead (chase + lobby statue).
+-- Name one of its parts "Bat" to have it swing while chasing.
 function ModelFactory.Villain(scale: number?): Model
 	local s = scale or 1
+	local custom = game:GetService("ReplicatedStorage"):FindFirstChild(Config.Villain.CustomModel)
+	if custom and custom:IsA("Model") and custom.PrimaryPart then
+		local clone = custom:Clone()
+		clone:ScaleTo(clone:GetScale() * s)
+		clone.WorldPivot = clone.PrimaryPart.CFrame
+		return clone
+	end
+
 	local model = Instance.new("Model")
 	model.Name = "Villain"
 	local root = add(model, { Name = "Root", Size = Vector3.new(1, 1, 1), CFrame = CFrame.new(0, 0.5 * s, 0), Transparency = 1, CastShadow = false })
 	model.PrimaryPart = root
 
-	local coat = Color3.fromRGB(235, 235, 240)
-	local dark = Color3.fromRGB(35, 25, 45)
-	local skin = Color3.fromRGB(200, 170, 150)
-	local purple = Color3.fromRGB(120, 40, 170)
-	-- Legs & boots
-	for _, side in { -0.7, 0.7 } do
-		add(model, { Name = "Leg", Size = Vector3.new(1.2, 3, 1.2) * s, CFrame = CFrame.new(side * s, 1.9 * s, 0), Color = dark })
-		add(model, { Name = "Boot", Size = Vector3.new(1.4, 0.8, 1.9) * s, CFrame = CFrame.new(side * s, 0.4 * s, -0.25 * s), Color = Color3.fromRGB(20, 20, 20) })
+	local brainPink = Color3.fromRGB(240, 120, 170)
+	local brainDark = Color3.fromRGB(190, 70, 120)
+	local skin = Color3.fromRGB(240, 150, 185)
+	local black = Color3.fromRGB(20, 20, 25)
+
+	-- Skinny legs in striped socks and chunky sneakers
+	for _, side in { -0.8, 0.8 } do
+		addCylinder(model, CFrame.new(side * s, 1.9 * s, 0), 3.2 * s, 0.6 * s, skin)
+		addCylinder(model, CFrame.new(side * s, 1.1 * s, 0), 0.5 * s, 0.7 * s, Color3.fromRGB(255, 255, 255))
+		add(model, { Name = "Sneaker", Size = Vector3.new(1.3, 0.8, 2.2) * s, CFrame = CFrame.new(side * s, 0.4 * s, -0.4 * s), Color = Color3.fromRGB(230, 40, 60) })
+		add(model, { Name = "Sole", Size = Vector3.new(1.35, 0.25, 2.25) * s, CFrame = CFrame.new(side * s, 0.12 * s, -0.4 * s), Color = Color3.fromRGB(255, 255, 255) })
 	end
-	-- Lab coat body with a long tail
-	add(model, { Name = "Coat", Size = Vector3.new(3.2, 3.8, 1.9) * s, CFrame = CFrame.new(0, 5.2 * s, 0), Color = coat })
-	add(model, { Name = "CoatTail", Size = Vector3.new(3.3, 1.6, 1.5) * s, CFrame = CFrame.new(0, 3.0 * s, 0.2 * s), Color = coat })
-	add(model, { Name = "Tie", Size = Vector3.new(0.5, 2.2, 0.2) * s, CFrame = CFrame.new(0, 5.6 * s, -1 * s), Color = purple })
-	-- Arms with purple gloves
-	for _, side in { -1, 1 } do
-		add(model, { Name = "Arm", Size = Vector3.new(1, 3.2, 1) * s, CFrame = CFrame.new(side * 2.1 * s, 5.2 * s, -0.3 * s) * CFrame.Angles(math.rad(-35), 0, 0), Color = coat })
-		add(model, { Name = "Glove", Size = Vector3.new(1.1, 1, 1.1) * s, CFrame = CFrame.new(side * 2.1 * s, 3.9 * s, -1.3 * s), Color = purple })
-	end
-	-- Head, goggles, grin, hair
-	add(model, { Name = "Head", Size = Vector3.new(2.2, 2.2, 2.2) * s, CFrame = CFrame.new(0, 8.2 * s, 0), Color = skin })
-	add(model, { Name = "GoggleStrap", Size = Vector3.new(2.3, 0.45, 2.3) * s, CFrame = CFrame.new(0, 8.5 * s, 0), Color = Color3.fromRGB(40, 40, 40) })
-	for _, side in { -0.5, 0.5 } do
-		add(model, { Name = "Goggle", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.4, 0.9, 0.9) * s, CFrame = CFrame.new(side * s, 8.5 * s, -1.15 * s) * CFrame.Angles(0, math.rad(90), 0), Color = Color3.fromRGB(120, 255, 90), Material = Enum.Material.Neon })
-	end
-	add(model, { Name = "Grin", Size = Vector3.new(1.3, 0.25, 0.1) * s, CFrame = CFrame.new(0, 7.6 * s, -1.12 * s), Color = Color3.fromRGB(20, 20, 20) })
+	-- The brain body (the whole character is basically a brain)
+	addEllipsoid(model, { Name = "Brain", Size = Vector3.new(6, 5, 5.2) * s, CFrame = CFrame.new(0, 6 * s, 0), Color = brainPink })
 	for i = -2, 2 do
-		add(model, { Name = "Hair", Class = "WedgePart", Size = Vector3.new(0.5, 1.4, 1.2) * s, CFrame = CFrame.new(i * 0.45 * s, 9.9 * s, 0.1 * s) * CFrame.Angles(math.rad(i * 8), 0, math.rad(i * 12)), Color = purple })
+		addEllipsoid(model, { Name = "Fold", Size = Vector3.new(0.35, 4.4, 4.6) * s, CFrame = CFrame.new(i * 1.1 * s, 6.2 * s, 0.1 * s) * CFrame.Angles(0, 0, math.rad(i * 9)), Color = brainDark })
+	end
+	add(model, { Name = "Split", Size = Vector3.new(0.25, 1.6, 5) * s, CFrame = CFrame.new(0, 8.1 * s, 0), Color = brainDark })
+	-- Angry face on the front of the brain
+	eyes(model, CFrame.new(0, 6.6 * s, -2.45 * s), 1.1 * s, 1 * s)
+	for _, side in { -1, 1 } do
+		add(model, { Name = "Brow", Size = Vector3.new(1.4, 0.35, 0.3) * s, CFrame = CFrame.new(side * 1.1 * s, 7.4 * s, -2.55 * s) * CFrame.Angles(0, 0, math.rad(side * -22)), Color = black })
+		add(model, { Name = "Mustache", Size = Vector3.new(1.4, 0.45, 0.3) * s, CFrame = CFrame.new(side * 0.75 * s, 5.6 * s, -2.6 * s) * CFrame.Angles(0, 0, math.rad(side * 15)), Color = black })
+	end
+	add(model, { Name = "Grin", Size = Vector3.new(1.6, 0.3, 0.2) * s, CFrame = CFrame.new(0, 5.0 * s, -2.5 * s), Color = black })
+	-- Tiny top hat
+	addCylinder(model, CFrame.new(0.6 * s, 8.75 * s, 0), 0.25 * s, 2.6 * s, black)
+	addCylinder(model, CFrame.new(0.6 * s, 9.75 * s, 0), 1.8 * s, 1.7 * s, black)
+	addCylinder(model, CFrame.new(0.6 * s, 9.15 * s, 0), 0.35 * s, 1.75 * s, Color3.fromRGB(150, 40, 200))
+	-- Noodle arms with white gloves
+	for _, side in { -1, 1 } do
+		addCylinder(model, CFrame.new(side * 3.4 * s, 5.4 * s, -0.4 * s) * CFrame.Angles(math.rad(-30), 0, math.rad(side * 25)), 3 * s, 0.5 * s, skin)
+		add(model, { Name = "Glove", Shape = Enum.PartType.Ball, Size = Vector3.one * 1.1 * s, CFrame = CFrame.new(side * 3.9 * s, 4.2 * s, -1.3 * s), Color = Color3.fromRGB(255, 255, 255) })
 	end
 	-- The Brainrot-catching net
-	local pole = add(model, { Name = "NetPole", Size = Vector3.new(0.3, 5, 0.3) * s, CFrame = CFrame.new(2.4 * s, 6 * s, -2 * s) * CFrame.Angles(math.rad(-40), 0, 0), Color = Color3.fromRGB(120, 90, 60) })
+	local pole = add(model, { Name = "Bat", Size = Vector3.new(0.3, 5, 0.3) * s, CFrame = CFrame.new(4 * s, 6.2 * s, -2.2 * s) * CFrame.Angles(math.rad(-40), 0, 0), Color = Color3.fromRGB(120, 90, 60) })
 	pole.Name = "Bat" -- the chaser swings its "Bat" part
-	add(model, { Name = "NetRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 2.6, 2.6) * s, CFrame = CFrame.new(2.4 * s, 8.3 * s, -4 * s) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(230, 230, 230), Transparency = 0.3 })
+	add(model, { Name = "NetRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 2.8, 2.8) * s, CFrame = CFrame.new(4 * s, 8.5 * s, -4.2 * s) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(230, 230, 230), Transparency = 0.3 })
 
 	model.WorldPivot = CFrame.identity
 	return model

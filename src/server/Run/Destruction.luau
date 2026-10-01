@@ -77,7 +77,7 @@ local function piecesOf(object: Instance): { BasePart }
 		table.insert(list, object)
 	end
 	for _, d in object:GetDescendants() do
-		if d:IsA("BasePart") and d.Name ~= "Rubble" then
+		if d:IsA("BasePart") and d.Name ~= "Rubble" and d.Name ~= "StandTop" then
 			table.insert(list, d)
 		end
 	end
@@ -152,6 +152,11 @@ function Destruction.ApplyDamage(object: Instance, amount: number, impact: Vecto
 	if health <= 0 then
 		-- Destroyed: everything goes flying, rubble stays behind.
 		object:SetAttribute("Destroyed", true)
+		for _, d in object:GetDescendants() do
+			if d.Name == "StandTop" then
+				d:Destroy() -- nothing left to stand on
+			end
+		end
 		local color = parts[1].Color
 		local ground = math.huge
 		local minX, maxX = math.huge, -math.huge

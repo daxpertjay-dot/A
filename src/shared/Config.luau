@@ -13,12 +13,14 @@ Config.DataStoreName = "BrainrotRunner_PlayerData_v1"
 Config.DataStoreEnabled = true -- falls back to session-only data if DataStores are unavailable (e.g. Studio without API access)
 
 -- ───────────────────────────── VILLAIN ─────────────────────────────
--- The evil guy chasing you. He kidnapped the Brainrots; Tung Tung Tung Sahur
--- is his henchman. Rename him here.
+-- The evil Brainrot guy chasing you. He kidnapped the Brainrots; Tung Tung
+-- Tung Sahur is his henchman. To use your own model for him, put a Model
+-- named CustomModel in ReplicatedStorage (see ModelFactory.Villain).
 Config.Villain = {
 	Name = "Verity",
 	Title = "VERITY",
 	Henchman = "TungTungTungSahur",
+	CustomModel = "VerityModel",
 }
 
 -- ───────────────────────────── LOBBY ─────────────────────────────
@@ -126,7 +128,7 @@ Config.Run = {
 Config.PowerUps = {
 	SpawnChancePerSegment = 0.45,
 	MagnetRadius = 26,
-	JetpackHeight = 22, -- studs above the track while flying
+	JetpackHeight = 32, -- studs above the run's base level while flying (roofs go up to 12)
 	JetpackSpeedMultiplier = 1.25,
 	JetpackLandingInvulnerability = 1.5,
 	SneakersJumpMultiplier = 1.45, -- jump velocity with Super Sneakers
@@ -203,6 +205,9 @@ Config.Animations = {
 		Idle = "rbxassetid://180435571",
 	},
 	RunSpeedDivisor = 34, -- playback speed = run speed / this
+	-- Optional jetpack flight animation id. Leave "" to use the built-in
+	-- Superman pose (one fist forward, legs trailing, jetpack flames).
+	Fly = "",
 }
 
 -- Robux developer products. Leave at 0 until you create them on the Creator

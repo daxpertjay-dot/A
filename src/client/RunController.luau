@@ -94,6 +94,12 @@ local humanoid: Humanoid? = nil
 local hipOffset = 3
 local trackFolder: Instance? = nil
 local board: BasePart? = nil
+local jetpack: Model? = nil
+local joints: { [string]: Motor6D } = {}
+local lastGroundY = 0
+-- How far the runner steps up onto something without jumping. Low on purpose:
+-- you land on obstacle tops by jumping, you don't walk up them.
+local STEP_UP = 1.6
 
 -- Probe params are configured in Prepare(), once the server has registered
 -- the collision groups.
@@ -126,8 +132,11 @@ local function loadAnimations(hum: Humanoid)
 	for _, playing in (animator :: Animator):GetPlayingAnimationTracks() do
 		playing:Stop(0)
 	end
-	local set = if hum.RigType == Enum.HumanoidRigType.R6 then ANIMS.R6 else ANIMS.R15
-	for name, id in set :: { [string]: string } do
+	local set = table.clone(if hum.RigType == Enum.HumanoidRigType.R6 then ANIMS.R6 else ANIMS.R15) :: { [string]: string }
+	if ANIMS.Fly ~= "" then
+		set.Fly = ANIMS.Fly
+	end
+	for name, id in set do
 		local anim = Instance.new("Animation")
 		anim.AnimationId = id
 		local ok, track = pcall(function()
@@ -196,9 +205,12 @@ local function setupCharacter(): boolean
 		hum:SetStateEnabled(s, false)
 	end
 	hum:ChangeState(Enum.HumanoidStateType.Physics)
+	table.clear(joints)
 	for _, d in char:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.CollisionGroup = "RunPlayer"
+		elseif d:IsA("Motor6D") then
+			joints[d.Name] = d
 		end
 	end
 	loadAnimations(hum)
@@ -516,6 +528,70 @@ local function setBoardVisible(visible: boolean)
 	end
 end
 
+-- ───────────────────────────── jetpack flight look ─────────────────────────────
+
+-- A little jetpack with fire, strapped on while flying.
+local function setJetpackVisible(visible: boolean)
+	if visible and not jetpack then
+		local m = Instance.new("Model")
+		m.Name = "Jetpack"
+		local function piece(name: string, size: Vector3, offset: CFrame, color: Color3, material: Enum.Material?, shape: Enum.PartType?): BasePart
+			local p = Instance.new("Part")
+			p.Name = name
+			p.Size = size
+			p.Color = color
+			p.Material = material or Enum.Material.Metal
+			if shape then
+				p.Shape = shape
+			end
+			p.Anchored = true
+			p.CanCollide = false
+			p.CanQuery = false
+			p.CanTouch = false
+			p:SetAttribute("Offset", offset)
+			p.Parent = m
+			return p
+		end
+		piece("Pack", Vector3.new(2.2, 2.4, 0.8), CFrame.new(0, 0.3, 0.9), Color3.fromRGB(200, 60, 60))
+		for _, side in { -0.6, 0.6 } do
+			piece("Tank", Vector3.new(2.6, 0.9, 0.9), CFrame.new(side, 0.3, 1.5) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(190, 190, 200), nil, Enum.PartType.Cylinder)
+			local flame = piece("Flame", Vector3.new(0.7, 1.8, 0.7), CFrame.new(side, -1.9, 1.5), Color3.fromRGB(255, 150, 40), Enum.Material.Neon)
+			local fire = Instance.new("Fire")
+			fire.Size = 4
+			fire.Heat = 12
+			fire.Color = Color3.fromRGB(255, 140, 40)
+			fire.SecondaryColor = Color3.fromRGB(255, 230, 120)
+			fire.Parent = flame
+		end
+		m.Parent = workspace
+		jetpack = m
+	elseif not visible and jetpack then
+		jetpack:Destroy()
+		jetpack = nil
+	end
+end
+
+-- Superman pose: one fist out in front, the other arm back, legs trailing.
+-- (Used unless Config.Animations.Fly has an animation id.)
+local function poseFlying(active: boolean)
+	local r15 = humanoid and humanoid.RigType == Enum.HumanoidRigType.R15
+	local function set(name: string, cf: CFrame)
+		local j = joints[name]
+		if j then
+			j.Transform = if active then cf else CFrame.identity
+		end
+	end
+	if r15 then
+		set("RightShoulder", CFrame.Angles(math.rad(170), 0, 0))
+		set("LeftShoulder", CFrame.Angles(math.rad(-25), 0, math.rad(-8)))
+		set("RightHip", CFrame.Angles(math.rad(-12), 0, 0))
+		set("LeftHip", CFrame.Angles(math.rad(8), 0, 0))
+	else
+		set("Right Shoulder", CFrame.Angles(0, 0, math.rad(170)))
+		set("Left Shoulder", CFrame.Angles(0, 0, math.rad(25)))
+	end
+end
+
 -- ───────────────────────────── main update ─────────────────────────────
 
 local function applyCharacter(xVelocity: number)
@@ -531,7 +607,8 @@ local function applyCharacter(xVelocity: number)
 	end
 	local stagger = if state.staggerTime > 0 then math.sin(state.staggerTime / C.StaggerTime * math.pi) * 0.35 else 0
 	local lean = math.clamp(-xVelocity * 0.006, -0.3, 0.3)
-	local flyTilt = if state.move == "Flying" then -0.35 else 0
+	local flying = state.move == "Flying"
+	local flyTilt = if flying then -1.15 else 0
 	local boardLift = if onBoard() then 0.8 else 0
 	local pos = worldPosition() + Vector3.new(0, hipOffset - rollDrop + boardLift, 0)
 	rootPart.CFrame = CFrame.new(pos) * CFrame.Angles(rollPitch + stagger + flyTilt, 0, lean)
@@ -539,18 +616,47 @@ local function applyCharacter(xVelocity: number)
 	rootPart.AssemblyAngularVelocity = Vector3.zero
 
 	setBoardVisible(onBoard() and state.phase == "Running")
+	setJetpackVisible(flying)
+	if jetpack then
+		local bob = CFrame.new(0, math.sin(state.elapsed * 6) * 0.15, 0)
+		for _, p in (jetpack :: Model):GetChildren() do
+			if p:IsA("BasePart") then
+				p.CFrame = rootPart.CFrame * bob * (p:GetAttribute("Offset") :: CFrame)
+			end
+		end
+	end
 	if board then
 		board.CFrame = CFrame.new(worldPosition() + Vector3.new(0, 0.4, 0)) * CFrame.Angles(0, 0, lean)
 	end
 
 	-- Animation selection
 	if state.phase ~= "Running" then
+		poseFlying(false)
 		playAnim("Idle")
-	elseif state.move == "Flying" or not state.grounded then
+	elseif flying then
+		if tracks.Fly then
+			playAnim("Fly")
+		else
+			-- No flight animation set: stop the others and hold the Superman pose.
+			if currentAnim ~= "FlyPose" then
+				for _, t in tracks do
+					t:Stop(0.1)
+				end
+				currentAnim = "FlyPose"
+			end
+			poseFlying(true)
+		end
+	elseif not state.grounded then
+		if currentAnim == "FlyPose" then
+			poseFlying(false)
+		end
 		if currentAnim ~= "Jump" then
 			playAnim("Jump")
 		end
 	else
+		if currentAnim == "FlyPose" then
+			poseFlying(false)
+		end
 		playAnim("Run", math.clamp(state.speed / ANIMS.RunSpeedDivisor, 0.8, 2.4))
 	end
 end
@@ -620,13 +726,14 @@ local function update(dt: number)
 		-- Vertical movement against the ground
 		state.vy -= R.Gravity * dt
 		state.feetY += state.vy * dt
-		local ground = probeGround(state.x, state.d, math.max(state.feetY, state.feetY - state.vy * dt) + 3.5)
+		local ground = probeGround(state.x, state.d, math.max(state.feetY, state.feetY - state.vy * dt) + STEP_UP)
 		state.groundY = ground or -math.huge
 		if ground and state.vy <= 0 and state.feetY <= ground + 0.05 then
 			state.feetY = ground
 			state.vy = 0
 			local justLanded = not state.grounded
 			state.grounded = true
+			lastGroundY = ground
 			if justLanded and t < state.jumpBufferedUntil then
 				jump()
 			elseif justLanded and state.queuedRoll then
@@ -659,7 +766,11 @@ local function update(dt: number)
 	if state.staggerTime <= 0 then
 		state.gap = math.min(C.MaxGap, state.gap + C.RecoverPerSecond * dt)
 	end
-	if state.feetY < -40 then
+	if state.feetY < lastGroundY - 18 and not flying then
+		-- Fell off the roof into a gap: Verity grabs you.
+		if state.gap > 0 then
+			RunController.Event:Fire("😱 YOU FELL!", Color3.fromRGB(255, 90, 90))
+		end
 		state.gap = 0
 	end
 	if state.gap <= 0 then
@@ -702,6 +813,7 @@ function RunController.Prepare(info: any): boolean
 	state.speedFactor = 1
 	state.speed = 0
 	state.gap = C.StartGap
+	lastGroundY = 0
 	state.invulnerableUntil = 0
 	state.magnetUntil, state.jetpackUntil, state.sneakersUntil, state.boosterUntil, state.hoverUntil = 0, 0, 0, 0, 0
 	table.clear(state.durations)
@@ -736,6 +848,20 @@ function RunController.Go()
 end
 
 function RunController.Revive()
+	-- If you fell into a gap, continue from the next roof.
+	if not probeGround(state.x, state.d, lastGroundY + 20) or state.feetY < lastGroundY - 4 then
+		for ahead = 4, 120, 4 do
+			local g = probeGround(state.x, state.d + ahead, 60)
+			if g then
+				state.d += ahead + 2
+				state.feetY = g
+				lastGroundY = g
+				state.vy = 0
+				state.grounded = true
+				break
+			end
+		end
+	end
 	state.phase = "Running"
 	state.gap = C.RevivedGap
 	state.invulnerableUntil = now() + C.RevivedInvulnerability
@@ -798,6 +924,8 @@ function RunController.Stop()
 	currentAnim = ""
 	trackFolder = nil
 	setBoardVisible(false)
+	setJetpackVisible(false)
+	poseFlying(false)
 end
 
 -- World-space position of the runner (for the camera and the chaser).

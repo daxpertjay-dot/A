@@ -54,7 +54,7 @@ local function playSound(id: string, volume: number?)
 	end)
 end
 
--- Runs happen at night in Verity's rail yard: dark sky, toxic green haze.
+-- Runs happen across the rooftops of Brainrot City at sunset.
 local lobbyLighting = {
 	ClockTime = Lighting.ClockTime,
 	OutdoorAmbient = Lighting.OutdoorAmbient,
@@ -65,13 +65,13 @@ local lobbyLighting = {
 local function setRunAtmosphere(enabled: boolean)
 	if enabled then
 		TweenService:Create(Lighting, TweenInfo.new(1), {
-			ClockTime = 20.5,
-			OutdoorAmbient = Color3.fromRGB(110, 100, 140),
-			Brightness = 2,
-			FogColor = Color3.fromRGB(40, 55, 45),
+			ClockTime = 17.6,
+			OutdoorAmbient = Color3.fromRGB(170, 130, 140),
+			Brightness = 2.6,
+			FogColor = Color3.fromRGB(255, 170, 140),
 		}):Play()
-		Lighting.FogStart = 200
-		Lighting.FogEnd = 620
+		Lighting.FogStart = 260
+		Lighting.FogEnd = 700
 	else
 		Lighting.FogStart = 0
 		Lighting.FogEnd = 100000
@@ -112,7 +112,7 @@ Remotes.Event("RunPrepare").OnClientEvent:Connect(function(info)
 	RunCamera.Start()
 	RunCamera.PlayIntro(Config.Run.IntroDuration, Chaser.Position)
 	playSound(Config.Sounds.Villain, 0.9)
-	RunHUD.Big(("☣️ %s IS COMING ☣️"):format(Config.Villain.Title), Color3.fromRGB(150, 255, 110), Config.Run.IntroDuration - 0.2)
+	RunHUD.Big(("🧠 %s IS COMING 🧠"):format(Config.Villain.Title), Color3.fromRGB(255, 140, 200), Config.Run.IntroDuration - 0.2)
 
 	-- Convert the server's go time into local clock time.
 	local goClock = os.clock() + math.max(0, info.goServerTime - workspace:GetServerTimeNow())
@@ -144,7 +144,7 @@ end)
 
 RunController.Caught:Connect(function()
 	Chaser.SetCaught(true)
-	RunHUD.Big("☣️ GOTCHA!", Color3.fromRGB(255, 90, 90), 1)
+	RunHUD.Big("🧠 GOTCHA!", Color3.fromRGB(255, 90, 90), 1)
 	playSound(Config.Sounds.Villain, 1)
 end)
 

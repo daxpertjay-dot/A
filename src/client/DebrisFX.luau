@@ -76,7 +76,9 @@ function DebrisFX.PredictBreak(obstacle: Instance, impact: Vector3, force: numbe
 	local spawned = 0
 	local parts = {}
 	for _, d in obstacle:GetDescendants() do
-		if d:IsA("BasePart") and d.Name ~= "Rubble" then
+		if d:IsA("BasePart") and d.Name == "StandTop" then
+			d.CanQuery = false -- predicted gone: don't land on it
+		elseif d:IsA("BasePart") and d.Name ~= "Rubble" then
 			table.insert(parts, d)
 		end
 	end

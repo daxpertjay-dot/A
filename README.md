@@ -1,10 +1,10 @@
 # 🧠 Brainrot Runner
 
-A Subway Surfers-style endless runner for Roblox. The evil **Verity** (with his henchman Tung Tung Tung Sahur) has kidnapped the Brainrots. You escape through his rail yard, grab coins and power-ups, and rescue caged Brainrots. Rescued Brainrots stand on your base and raise your **score multiplier**, and coins buy upgrades.
+A Subway Surfers-style endless runner for Roblox. The evil Brainrot guy **Verity** (with his henchman Tung Tung Tung Sahur) has kidnapped the Brainrots. You escape across the rooftops of Brainrot City, grab coins and power-ups, and rescue caged Brainrots. Rescued Brainrots stand on your base and raise your **score multiplier**, and coins buy upgrades.
 
 ```
 YOUR BASE (Brainrots on pedestals = ⭐ score multiplier)
-  → walk into YOUR RUN PORTAL → Verity bursts out of his factory → 3… 2… 1… RUN!
+  → walk into YOUR RUN PORTAL → Verity bursts out of his rooftop stairwell → 3… 2… 1… RUN!
   → dodge · jump · roll · grab 🪙 coins, 🧲🚀👟✖️2 power-ups, ❓ mystery boxes
   → 🔓 rescue caged Brainrots → caught → SAVE ME (coins) or END
   → RESULTS: score = meters × multiplier, coins, rescues → back to your base
@@ -97,16 +97,21 @@ A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxe
 ### The chase
 Crashes let **Verity** close in. Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run.
 
-### The track: Verity's Rail Yard
-One consistent night-time freight yard with deliberately clean lanes. The segment types are:
-- **Yard:** barriers and gantries.
-- **Trains:** switch lanes, or take the ramp and run the roofs.
-- **Factory halls.**
-- **Smash zones:** wooden walls you can crash through at speed.
-- **Bonus vaults:** a wall-sealed lane holding a mystery box.
-- **Rescue cages.**
+### The track: Brainrot City Rooftops
+You run across the roofs of the city at sunset, using Subway Surfers lanes but up high:
+
+- **Roofs change height**: ramps climb to taller buildings, and you drop down to lower ones.
+- **Leap** buildings end in a gap. Jump it (the coins show the arc, and sometimes a plank bridges one lane). If you fall in, Verity gets you; a revive puts you on the next roof.
+- **You can stand on everything you can reach.** AC units, barriers, walls and billboards all have tops you can land on, and **rooftop sheds** can be run along via their ramps. With 👟 Super Sneakers you can hop onto almost anything.
+- Other sections: glass **penthouses**, **smash zones** (wooden walls), **bonus vaults** and **rescue cages**.
 
 Destruction is still in: small things smash, wooden walls break at high speed, and concrete chips with repeated hits.
+
+### Verity
+Verity is a big angry Brainrot guy: a giant pink brain with a mustache, a top hat and sneakers, carrying a net, with Tung Tung Tung Sahur running beside him. To use **your own Verity model**, put a Model named `VerityModel` in **ReplicatedStorage**, with its PrimaryPart at the feet and facing forward. The chase and the lobby statue will use it automatically. Optionally, name one of its parts `Bat` to make it swing.
+
+### Flying
+With the 🚀 Jetpack your character flies Superman-style: tipped forward, one fist out, with a flaming jetpack on your back. To use a real animation instead, put its ID in `Config.Animations.Fly`.
 
 ### Lobby & your base
 - The lobby is a blocky street with a conveyor loop, an ⬆️ Upgrades stall, a shop, daily rewards, the leaderboard, and a statue of Verity (WANTED).
@@ -138,7 +143,7 @@ src/
 │   └── Run/
 │       ├── RunManager.luau    run lifecycle, score, power-ups, rescues, revive, results
 │       ├── TrackGenerator.luau  generates segments ahead / recycles behind
-│       ├── Segments.luau      Verity's Rail Yard segment library
+│       ├── Segments.luau      Brainrot City Rooftops segment library
 │       └── Destruction.luau   breakable walls & debris
 └── client/                    StarterPlayerScripts.Client
     ├── Main.client.luau       lobby ⇄ run orchestration
@@ -151,7 +156,7 @@ src/
 ```
 
 ## Things to set up
-- **The villain**: rename him in `Config.Villain`.
+- **The villain**: rename him in `Config.Villain`, or drop in your own `VerityModel` (see above).
 - **Robux products**: put developer product IDs in `Config.DeveloperProducts` (coin packs, revive, hoverboards).
 - **Sounds**: add asset IDs to `Config.Sounds`.
 - **Animations**: swap run/jump animation IDs in `Config.Animations`.
