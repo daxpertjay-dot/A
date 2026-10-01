@@ -7,3 +7,6 @@ sourcemap.json
 
 # Headless test mirror + logs
 tests/.mirror
+
+# Python bytecode
+__pycache__/
