@@ -4,3 +4,6 @@
 *.rbxlx.lock
 sourcemap.json
 /build
+
+# Headless test mirror + logs
+tests/.mirror

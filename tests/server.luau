@@ -1,0 +1,163 @@
+local H = require("./harness")
+local roblox = require("@lune/roblox")
+local task = require("@lune/task")
+local Vector3, CFrame = roblox.Vector3, roblox.CFrame
+local function sig(store, key)
+	return { Connect = function(_, fn) if store then store[key] = fn end; return { Disconnect = function() end } end, Once = function() end }
+end
+local handlers, clientEvents, worldEvents = {}, {}, {}
+H.remotes.Event = function(name)
+	return {
+		FireClient = function(_, player, ...)
+			clientEvents[name] = { ... }
+			if name == "RunWorld" then table.insert(worldEvents, (...)) end
+			if name ~= "DataUpdated" then print("  → client", name, name == "RunWorld" and (...).type or "") end
+		end,
+		OnServerEvent = sig(handlers, name),
+	}
+end
+local fnTables = {}
+H.remotes.Function = function(name) fnTables[name] = fnTables[name] or {}; return fnTables[name] end
+local services = H.services
+local playerAdded = {}
+services.Players.PlayerAdded = sig(playerAdded, "fn")
+services.Players.PlayerRemoving = sig(playerAdded, "removing")
+services.Players.GetPlayerFromCharacter = function() return nil end
+services.Players.GetPlayers = function() return {} end
+services.Players.RespawnTime = 0
+local heartbeat = {}
+services.RunService.Heartbeat = sig(heartbeat, "fn")
+services.MarketplaceService = { PromptProductPurchase = function() print("  prompt purchase") end }
+roblox.implementMethod("Folder", "GetServerTimeNow", function() return os.clock() end)
+
+local player = roblox.Instance.new("Player")
+player.Name = "Jay"; player.DisplayName = "Jay"; player.UserId = 12345
+player.Parent = roblox.Instance.new("Folder")
+roblox.implementMethod("Player", "Kick", function(_, msg) error("kicked: " .. msg) end)
+roblox.implementMethod("Player", "RequestStreamAroundAsync", function() end)
+local loadCount = 0
+roblox.implementMethod("Player", "LoadCharacter", function() loadCount += 1 end)
+local character = roblox.Instance.new("Model")
+local root = roblox.Instance.new("Part"); root.Name = "HumanoidRootPart"; root.Parent = character
+local hum = roblox.Instance.new("Humanoid"); hum.Parent = character; hum.Health = 100
+character.PrimaryPart = root
+player.Character = character
+
+local Main = H.node(H.root .. "/server", nil, "Server")
+H.require(Main.Main)
+playerAdded.fn(player)
+local PlayerData = H.require(Main.PlayerData)
+local profile = assert(PlayerData.Get(player), "profile not loaded")
+print("new profile: coins", profile.Coins, "boards", profile.Hoverboards, "pedestals", profile.Pedestals, "multiplier", PlayerData.Multiplier(profile))
+
+local function inv(name, ...) local r = fnTables[name].OnServerInvoke(player, ...); print(name, r.ok, r.message or r.level or r.pedestals or r.hoverboards or ""); return r end
+inv("BuyUpgrade", "Jetpack")
+profile.Coins = 100000
+inv("BuyUpgrade", "Jetpack"); inv("BuyUpgrade", "Jetpack")
+inv("BuyPedestal"); inv("BuyHoverboards", "Coins"); inv("BuyHoverboards", "Robux")
+inv("ClaimDaily"); inv("ClaimDaily")
+profile.Brainrots.TrippiTroppi = 2
+PlayerData.Changed(player)
+print("multiplier with 2 Trippi + Chimp:", PlayerData.Multiplier(profile), "coins", profile.Coins, "boards", profile.Hoverboards)
+-- Hype: offline charging
+print("new player hype", profile.Hype)
+profile.Hype = 0; profile.HypeUpdated = os.time() - 4 * 3600
+local added = PlayerData.ChargeHype(profile, false)
+print(("4h offline at multiplier %s → hype %.3f"):format(tostring(PlayerData.Multiplier(profile)), profile.Hype))
+profile.Hype = 1
+
+local RunManager = H.require(Main.Run.RunManager)
+RunManager.StartRun(player)
+task.wait(1.3)
+local prep = assert(clientEvents.RunPrepare, "no RunPrepare")[1]
+print("prepare multiplier", prep.multiplier, "boards", prep.hoverboards, "hype", prep.hype)
+task.wait(prep.goServerTime - os.clock() + 0.1)
+local runs = nil
+for i = 1, 360 do
+	root.CFrame = CFrame.new(prep.origin + Vector3.new(0, 3, -(6 + i * (300 / 360))))
+	heartbeat.fn(1 / 60)
+end
+-- tricks: a valid clear, the same one again (rejected), one far away (rejected)
+local near, far
+for _, d in prep.trackFolder:GetDescendants() do
+	local td = d:GetAttribute("TrackD")
+	if td and not d:GetAttribute("NoStyle") then
+		if not near and td > 270 and td < 318 and d:GetAttribute("ObstacleType") then near = d end
+		if not far and td > 600 then far = d end
+	end
+end
+local nWorld = #worldEvents
+if near then handlers.ReportStyle(player, "Clear", near); task.wait(0.15); handlers.ReportStyle(player, "Clear", near) end
+if far then task.wait(0.15); handlers.ReportStyle(player, "NearMiss", far) end
+handlers.ReportStyle(player, "Bogus", near)
+local combos = 0
+for i = nWorld + 1, #worldEvents do if worldEvents[i].type == "Combo" then combos += 1 end end
+print("trick reports accepted:", combos, "(expected 1)", "near", near ~= nil, "far", far ~= nil)
+local function place(attrs)
+	local p = roblox.Instance.new("Part")
+	p.CFrame = root.CFrame
+	for k, v in attrs do p:SetAttribute(k, v) end
+	p.Parent = prep.trackFolder
+	return p
+end
+handlers.PickupItem(player, place({ Pickup = "PowerUp", PowerUpId = "Jetpack" }))
+local sky = 0
+for _, d in prep.trackFolder:GetDescendants() do if d.Parent and d.Parent.Name == "SkyCoins" then sky += 1 end end
+print("sky coins spawned", sky)
+handlers.PickupItem(player, place({ Pickup = "PowerUp", PowerUpId = "ScoreBooster" }))
+handlers.PickupItem(player, place({ Pickup = "MysteryBox" }))
+handlers.PickupItem(player, place({ Pickup = "Brainrot", BrainrotId = "CappuccinoAssassino" }))
+handlers.CollectCoin(player, place({ Coin = true, Value = 1 }))
+-- booster: next 100 studs score double
+local before = 0
+for i = 1, 120 do
+	root.CFrame = CFrame.new(prep.origin + Vector3.new(0, 3, -(306 + i * (100 / 120))))
+	heartbeat.fn(1 / 60)
+end
+handlers.UseHoverboard(player)
+local wall
+for _, d in prep.trackFolder:GetDescendants() do if d:GetAttribute("Tier") == 3 or d:GetAttribute("Kind") == "ConcreteWall" then wall = d break end end
+if not wall then for _, d in prep.trackFolder:GetDescendants() do if d:GetAttribute("ObstacleType") and d:GetAttribute("Tier") == 4 then wall = d break end end end
+if wall then local cf = wall:GetBoundingBox(); root.CFrame = cf; handlers.ReportHit(player, wall, { speed = 40, point = cf.Position }) end
+handlers.ReportCaught(player)
+print("caught info", clientEvents.RunCaught[1].cost, clientEvents.RunCaught[1].score)
+handlers.ChooseRevive(player, "Coins")
+handlers.ReportCaught(player)
+handlers.ChooseRevive(player, false)
+local r = clientEvents.RunEnded[1]
+print(("results: score=%d high=%s distance=%d mult=%s→%s coins=%d box=%d/%d rescued=%d bestCombo=%.2f hype %.2f→%.2f xp=%d levelUps=%d"):format(r.score, tostring(r.newHighScore), r.distance, tostring(r.multiplier), tostring(r.newMultiplier), r.totalCoins, r.boxCoins, r.boxBoards, #r.rescued, r.bestCombo, r.hypeStart, r.hypeLeft, r.xp, #r.levelUps))
+for _, up in r.levelUps do print("  level up", up.name, up.from, "→", up.to, "bonus", up.bonus) end
+local P = H.require(H.shared.Progression)
+for id, xp in profile.BrainrotXP do print("  xp", id, xp, "level", (P.Level(xp))) end
+print("profile hype after run", profile.Hype)
+handlers.LeaveResults(player)
+print("profile after: highscore", profile.Stats.HighScore, "rescued", profile.Stats.BrainrotsRescued, "boards", profile.Hoverboards, "load", loadCount)
+-- Died during the "RUN STARTING..." fade: the run must not carry on starting.
+clientEvents.RunPrepare = nil
+RunManager.StartRun(player)
+task.wait(0.2)
+RunManager.EndRun(player, "Died")
+task.wait(1.4)
+print("died in fade: RunPrepare sent afterwards?", clientEvents.RunPrepare ~= nil, "results sent", clientEvents.RunEnded ~= nil)
+assert(clientEvents.RunPrepare == nil)
+task.wait(0.6)
+clientEvents.ReturnedToLobby = nil
+handlers.LeaveResults(player)
+print("back to base after dying:", clientEvents.ReturnedToLobby ~= nil, "InRun", player:GetAttribute("InRun"), "running", RunManager.IsRunning(player))
+assert(clientEvents.ReturnedToLobby and not RunManager.IsRunning(player) and not player:GetAttribute("InRun"))
+-- Leaving in the middle of a run (client couldn't continue) settles it and goes home.
+task.wait(2.1)
+RunManager.StartRun(player)
+task.wait(1.3)
+local runsBefore = profile.Stats.TotalRuns
+clientEvents.ReturnedToLobby = nil
+handlers.LeaveResults(player)
+print("left mid-run:", clientEvents.ReturnedToLobby ~= nil, "running", RunManager.IsRunning(player), "runs counted", profile.Stats.TotalRuns - runsBefore)
+assert(clientEvents.ReturnedToLobby and not RunManager.IsRunning(player))
+-- BACK TO BASE with no run on the server at all still works.
+task.wait(2.1)
+clientEvents.ReturnedToLobby = nil
+handlers.LeaveResults(player)
+assert(clientEvents.ReturnedToLobby, "no run: still sent home")
+print("SERVER OK")
+require("@lune/process").exit(0)
