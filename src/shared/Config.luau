@@ -203,9 +203,11 @@ Config.Chase = {
 		SmallBreak = 0.8, -- tier 1 object smashed
 		CrashThrough = 1.5, -- tier 2 wall broken with momentum
 		Bump = 2.5, -- stopped by a wall you could not break
-		SideBump = 1.2, -- clipped something while changing lanes
+		SideBump = 2, -- switched lanes into the side of something
 	},
 	SlowdownOnSmallBreak = 0.85, -- speed multiplier (recovers)
+	SideBumpSpeed = 0.6, -- bouncing off the side of something drops you to this much speed (recovers)
+	SideBumpStumble = 0.35, -- seconds of sideways wobble after a side bump
 	StaggerTime = 0.55,
 	BumpPushback = 5,
 	SpeedRecoveryPerSecond = 0.9,

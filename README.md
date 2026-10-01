@@ -126,7 +126,11 @@ Rescues are kept even if you get caught. Your best Brainrots automatically take 
 A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It **boosts your jump** high enough for buses and tunnel roofs, and it saves you from one crash by breaking instead.
 
 ### The chase
-Crashes let **Verity** close in. Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run.
+Crashes let **Verity** close in:
+- **Running into the front** of something you can't break stops you dead.
+- **Switching lanes into the side** of something (a bus beside you, a vault wall) bounces you back into your lane. You stumble, drop to 60% speed for a moment and lose half your combo, like in Subway Surfers.
+
+Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run. **BACK TO BASE** always gets you home, even if you died mid-run or during the "RUN STARTING…" fade.
 
 ### The track: Brainrot City streets
 You run down the middle of the road at sunset, with shops and apartment blocks on both sides. Sections:

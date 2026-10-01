@@ -12,6 +12,7 @@
 --            ├─ ROLLING → RUNNING
 --            └─ FLYING (🚀 jetpack) → FALLING → RUNNING
 --   RUNNING → HIT → STAGGERED → RUNNING
+--   RUNNING → side bump (switched lanes into something) → bounced back, slowed
 --   RUNNING → CAUGHT (the villain got you)
 --
 -- Power-ups (🧲 magnet, 🚀 jetpack, 👟 super sneakers, ✖️2 booster) and the
@@ -65,6 +66,8 @@ local state = {
 	queuedRoll = false,
 	jumpBufferedUntil = 0,
 	staggerTime = 0,
+	stumbleTime = 0, -- wobble after bouncing off the side of something
+	stumbleDir = 0,
 	speedFactor = 1,
 	speed = 0,
 	gap = C.StartGap,
@@ -196,6 +199,7 @@ local function setupCharacter(): boolean
 	end
 	local hum = humanoid :: Humanoid
 	local rootPart = root :: BasePart
+	rootPart.Anchored = false -- Stop() freezes the character between runs
 	hipOffset = if hum.RigType == Enum.HumanoidRigType.R6 then 3 else hum.HipHeight + rootPart.Size.Y / 2
 
 	-- The run controller owns movement: turn off everything that would fight it.
@@ -410,26 +414,58 @@ end
 
 -- ───────────────────────────── collisions ─────────────────────────────
 
-local function onObstacle(obstacle: Instance, part: BasePart)
+-- Did we touch this from the side rather than run into its front? Either we
+-- weren't lined up with it last frame (we moved sideways into it), or we're
+-- already alongside it, past its front (e.g. running next to a bus).
+local function hitFromSide(obstacle: Instance, part: BasePart, prevX: number): boolean
+	local partX = part.Position.X - state.origin.X
+	local reach = part.Size.X / 2 + R.HitboxWidth / 2
+	if math.abs(partX - prevX) >= reach - 0.05 then
+		return true
+	end
+	local trackD = obstacle:GetAttribute("TrackD")
+	return type(trackD) == "number" and state.d - trackD > R.HitboxDepth + 1.5
+end
+
+-- Switched lanes into the side of something: bounce back off it into the
+-- lane you came from (Subway Surfers style), stumble and lose speed. The
+-- villain closes in, but it's not a crash. Returns false for a touch while
+-- already bouncing away (that one doesn't count).
+local function sideBump(obstacle: Instance, part: BasePart, t: number): boolean
+	local partX = part.Position.X - state.origin.X
+	local heading = LANES[state.lane] - state.x
+	if heading * (partX - state.x) <= 0 then
+		return false
+	end
+	local dir = if heading > 0 then 1 else -1
+	if state.lane ~= state.fromLane then
+		-- Reverse the lane change from wherever we are between the lanes.
+		state.lane, state.fromLane = state.fromLane, state.lane
+		state.laneT = 1 - state.laneT
+	end
+	ignore[obstacle] = t -- no near-miss credit for this one (doesn't block hits)
+	state.stumbleTime = C.SideBumpStumble
+	state.stumbleDir = dir
+	state.speedFactor = math.min(state.speedFactor, C.SideBumpSpeed)
+	loseGap(C.GapLoss.SideBump)
+	state.combo.stacks /= 2 -- predicted; the server confirms
+	addShake(0.6)
+	RunController.Event:Fire("💥 BUMP!", Color3.fromRGB(255, 170, 90))
+	RunController.Impact:Fire("Side")
+	Remotes.Event("ReportHit"):FireServer(obstacle, { side = true })
+	return true
+end
+
+-- Returns true when the hit stopped or bounced the runner (no more checks
+-- this frame).
+local function onObstacle(obstacle: Instance, part: BasePart, prevX: number): boolean
 	local t = now()
 	if (ignore[obstacle] or 0) > t or obstacle:GetAttribute("Destroyed") then
-		return
+		return false
 	end
 
-	-- Clipped something while changing lanes → bounce back to the old lane.
-	local obstacleLane = obstacle:GetAttribute("Lane")
-	if obstacleLane ~= state.lane then
-		if state.laneT < 1 then
-			state.lane, state.fromLane = state.fromLane, state.lane
-			state.laneT = 1 - state.laneT
-		end
-		ignore[obstacle] = t + 0.5
-		loseGap(C.GapLoss.SideBump)
-		state.combo.stacks /= 2 -- predicted; the server confirms
-		addShake(0.4)
-		RunController.Impact:Fire("Side")
-		Remotes.Event("ReportHit"):FireServer(obstacle, { side = true })
-		return
+	if hitFromSide(obstacle, part, prevX) then
+		return sideBump(obstacle, part, t)
 	end
 
 	local tier = obstacle:GetAttribute("Tier") or 4
@@ -471,9 +507,10 @@ local function onObstacle(obstacle: Instance, part: BasePart)
 		RunController.Event:Fire(if tier >= 4 then "😵 OUCH!" else "😵 CRASH! (keep hitting it…)", Color3.fromRGB(255, 90, 90))
 	end
 	RunController.Impact:Fire(result.outcome)
+	return result.outcome == "Bump"
 end
 
-local function checkCollisions(prevD: number)
+local function checkCollisions(prevD: number, prevX: number)
 	if not trackFolder or now() < state.invulnerableUntil or isFlying() then
 		return
 	end
@@ -487,8 +524,7 @@ local function checkCollisions(prevD: number)
 		local obstacle = obstacleOf(part)
 		if obstacle and not seen[obstacle] then
 			seen[obstacle] = true
-			onObstacle(obstacle, part)
-			if state.staggerTime > 0 then
+			if onObstacle(obstacle, part, prevX) then
 				break
 			end
 		end
@@ -696,6 +732,10 @@ local function applyCharacter(xVelocity: number)
 	end
 	local stagger = if state.staggerTime > 0 then math.sin(state.staggerTime / C.StaggerTime * math.pi) * 0.35 else 0
 	local lean = math.clamp(-xVelocity * 0.006, -0.3, 0.3)
+	if state.stumbleTime > 0 then
+		-- Knocked sideways off the thing we bumped into.
+		lean += state.stumbleDir * math.sin(state.stumbleTime / C.SideBumpStumble * math.pi) * 0.45
+	end
 	local flying = state.move == "Flying"
 	local flyTilt = if flying then -1.15 else 0
 	local boardLift = if onBoard() then 0.8 else 0
@@ -777,6 +817,9 @@ local function update(dt: number)
 	end
 	if state.rollTime > 0 then
 		state.rollTime = math.max(0, state.rollTime - dt)
+	end
+	if state.stumbleTime > 0 then
+		state.stumbleTime = math.max(0, state.stumbleTime - dt)
 	end
 
 	-- Forward speed
@@ -863,7 +906,7 @@ local function update(dt: number)
 		end
 	end
 
-	checkCollisions(prevD)
+	checkCollisions(prevD, prevX)
 	checkTricks(prevD)
 	updateCollectibles(dt)
 
@@ -905,7 +948,7 @@ function RunController.Prepare(info: any): boolean
 	state.vy = 0
 	state.grounded = true
 	state.lane, state.fromLane, state.laneT = 0, 0, 1
-	state.rollTime, state.staggerTime = 0, 0
+	state.rollTime, state.staggerTime, state.stumbleTime = 0, 0, 0
 	state.queuedRoll = false
 	state.jumpBufferedUntil = 0
 	state.speedFactor = 1
@@ -1007,6 +1050,14 @@ end
 function RunController.Stop()
 	state.phase = "Idle"
 	RunService:UnbindFromRenderStep("BrainrotRunController")
+	-- Freeze the character where it is. During a run it collides with
+	-- nothing, so left alone it would drop out of the world (and die) while
+	-- the results are up. Going back to the base gives a fresh character.
+	local rootPart = root
+	if rootPart and rootPart.Parent then
+		rootPart.AssemblyLinearVelocity = Vector3.zero
+		rootPart.Anchored = true
+	end
 	InputController.SetEnabled(false)
 	for _, connection in connections do
 		connection:Disconnect()

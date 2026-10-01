@@ -19,12 +19,16 @@ local Config = require(Shared.Config)
 local PowerUpData = require(Shared.PowerUpData)
 local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
+local Signal = require(Shared.Signal)
 local Util = require(Shared.Util)
 
 local RunController = require(script.Parent.Parent.RunController)
 local UIKit = require(script.Parent.UIKit)
 
 local RunHUD = {}
+
+-- Fired by "BACK TO BASE" on the results screen.
+RunHUD.Leave = Signal.new()
 
 local C = UIKit.Colors
 local gui: ScreenGui
@@ -316,6 +320,7 @@ function RunHUD.ShowResults(results: any)
 	RunHUD.HideCaught()
 	hud.Visible = false
 	tipLabel.Visible = false
+	fade.Visible = false -- the run may have ended during the "RUN STARTING..." fade
 	UIKit.Clear(resultsBody)
 	resultsBody.CanvasPosition = Vector2.zero
 
@@ -476,7 +481,7 @@ function RunHUD.Init(playerGui: PlayerGui)
 	resultsBody = UIKit.Scroller(resultsPanel, { Position = UDim2.fromOffset(16, 14), Size = UDim2.new(1, -32, 1, -90) })
 	UIKit.List(nil, 6).Parent = resultsBody
 	UIKit.Button({ Text = "BACK TO BASE", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -16), Size = UDim2.new(0.7, 0, 0, 54), BackgroundColor3 = C.Good }, function()
-		Remotes.Event("LeaveResults"):FireServer()
+		RunHUD.Leave:Fire()
 	end).Parent = resultsPanel
 
 	fade = UIKit.New("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 50, Parent = gui })

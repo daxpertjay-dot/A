@@ -99,9 +99,26 @@ Remotes.Event("RunStarting").OnClientEvent:Connect(function()
 	end
 end)
 
+-- Leaves the run and goes back to the base, whatever state things are in.
+-- If the server doesn't answer, return to the lobby on our own.
+local backToLobby: () -> ()
+local function leaveRun()
+	Remotes.Event("LeaveResults"):FireServer()
+	task.delay(5, function()
+		if inRun then
+			backToLobby()
+			Remotes.Event("GoToBase"):FireServer()
+		end
+	end)
+end
+RunHUD.Leave:Connect(leaveRun)
+
 Remotes.Event("RunPrepare").OnClientEvent:Connect(function(info)
 	if not RunController.Prepare(info) then
-		warn("[BrainrotRunner] could not set up the run controller")
+		-- No character to run with (e.g. it just died): bail out to the base
+		-- instead of sitting on a black screen.
+		warn("[BrainrotRunner] could not set up the run controller; returning to base")
+		leaveRun()
 		return
 	end
 	LobbyFX.SetEnabled(false)
@@ -165,7 +182,7 @@ Remotes.Event("RunEnded").OnClientEvent:Connect(function(results)
 	RunHUD.ShowResults(results)
 end)
 
-local function backToLobby()
+function backToLobby()
 	inRun = false
 	RunController.Stop()
 	RunCamera.Stop()

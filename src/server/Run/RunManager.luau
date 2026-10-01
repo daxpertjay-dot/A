@@ -185,7 +185,8 @@ function RunManager.StartRun(player: Player)
 	end))
 
 	task.delay(Config.Run.RunStartingFade, function()
-		if runs[player] ~= run or not player.Parent then
+		-- The run may already be over (e.g. the character died during the fade).
+		if runs[player] ~= run or run.ended or not player.Parent then
 			return
 		end
 		local startCf = CFrame.new(origin + Vector3.new(0, 3, -START_D))
@@ -576,6 +577,8 @@ local function cleanup(run: Run)
 	slotsInUse[run.slot] = nil
 end
 
+-- Always gets the player back to their base with a fresh character, from any
+-- state (results screen, a broken run, a run the server already cleaned up).
 function RunManager.ReturnToLobby(player: Player)
 	local run = runs[player]
 	if run then
@@ -584,7 +587,12 @@ function RunManager.ReturnToLobby(player: Player)
 	end
 	player:SetAttribute("InRun", false)
 	if player.Parent then
-		player:LoadCharacter()
+		local ok, err = pcall(function()
+			player:LoadCharacter()
+		end)
+		if not ok then
+			warn("[RunManager] LoadCharacter failed:", err)
+		end
 		Remotes.Event("ReturnedToLobby"):FireClient(player)
 	end
 end
@@ -703,11 +711,23 @@ function RunManager.Init()
 	Remotes.Event("UseHoverboard").OnServerEvent:Connect(onUseHoverboard)
 	Remotes.Event("ReportCaught").OnServerEvent:Connect(onReportCaught)
 	Remotes.Event("ChooseRevive").OnServerEvent:Connect(onChooseRevive)
+	-- "BACK TO BASE" on the results screen. Also the client's way out of a run
+	-- it can't continue: an unfinished run is settled first (like being caught).
+	local lastLeave: { [Player]: number } = {}
 	Remotes.Event("LeaveResults").OnServerEvent:Connect(function(player)
-		local run = runs[player]
-		if run and run.phase == "Results" then
-			RunManager.ReturnToLobby(player)
+		local now = os.clock()
+		if (lastLeave[player] or 0) > now then
+			return
 		end
+		lastLeave[player] = now + 2
+		local run = runs[player]
+		if run and not run.ended then
+			RunManager.EndRun(player, "Left")
+		end
+		RunManager.ReturnToLobby(player)
+	end)
+	Players.PlayerRemoving:Connect(function(player)
+		lastLeave[player] = nil
 	end)
 
 	-- Walk into a run portal to start. Plot portals only work for their owner.
