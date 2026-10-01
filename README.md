@@ -1,13 +1,14 @@
 # 🧠 Brainrot Runner
 
-A Subway Surfers-style endless runner for Roblox. The evil Brainrot guy **Verity** (with his henchman Tung Tung Tung Sahur) has kidnapped the Brainrots. You escape across the rooftops of Brainrot City, grab coins and power-ups, and rescue caged Brainrots. Rescued Brainrots stand on your base and raise your **score multiplier**, and coins buy upgrades.
+A Subway Surfers-style endless runner for Roblox. The evil Brainrot guy **Verity** (with his henchman Tung Tung Tung Sahur) has kidnapped the Brainrots. You escape through the streets of Brainrot City, grab coins and power-ups, and rescue caged Brainrots. Rescued Brainrots stand on your base and raise your **score multiplier**. Every run's score levels them up, stylish play builds a **combo**, and your base charges **Hype** while you're away. Coins buy upgrades.
 
 ```
-YOUR BASE (Brainrots on pedestals = ⭐ score multiplier)
-  → walk into YOUR RUN PORTAL → Verity bursts out of his rooftop stairwell → 3… 2… 1… RUN!
-  → dodge · jump · roll · grab 🪙 coins, 🧲🚀👟✖️2 power-ups, ❓ mystery boxes
-  → 🔓 rescue caged Brainrots → caught → SAVE ME (coins) or END
-  → RESULTS: score = meters × multiplier, coins, rescues → back to your base
+YOUR BASE (Brainrots on pedestals = ⭐ score multiplier, ⚡ Hype charging up)
+  → walk into YOUR RUN PORTAL → Verity bursts out of his HQ → 3… 2… 1… RUN!
+  → dodge · jump · roll · 🔥 build a combo · grab 🪙 coins, 🧲🚀👟✖️2 power-ups, ❓ mystery boxes
+  → boost-jump onto 🚌 buses and 🚇 tunnel roofs · 🔓 rescue caged Brainrots
+  → caught → SAVE ME (coins) or END
+  → RESULTS: score, coins, rescues, Brainrot XP and level-ups → back to your base
 ```
 
 Everything (lobby, bases, track, characters, UI) is built from code, so it runs in an empty place with no uploaded assets.
@@ -46,17 +47,47 @@ A jump instantly cancels a roll, and a jump pressed just before landing fires on
 
 ### ⭐ Score & multiplier (the main goal)
 - **Score = meters run × score multiplier.** The leaderboard ranks high scores.
-- Your multiplier is **1 + the bonus of every Brainrot standing on your base**:
+- During a run your multiplier is:
 
-| Rarity | Bonus |
-|---|---|
-| Uncommon | +1x |
-| Rare | +2x |
-| Epic | +3x |
-| Legendary | +5x |
+  **base (your Brainrots) × ✖️2 Score Booster × 🔥 combo × ⚡ Hype**
+
+  The HUD shows the total, with the combo and Hype meters under your score.
+- Your **base multiplier** is **1 + the bonus of every Brainrot standing on your base**:
+
+| Rarity | Bonus at Lv 1 | Bonus at Lv 10 |
+|---|---|---|
+| Uncommon | +1x | +3.25x |
+| Rare | +2x | +6.5x |
+| Epic | +3x | +9.75x |
+| Legendary | +5x | +16.25x |
 
 - Your base starts with **3 pedestals** and holds up to 10. Buying more pedestals with coins raises your multiplier ceiling.
-- The **✖️2 Score Booster** power-up doubles the multiplier while it lasts.
+
+### 🧠 Brainrot levels: your score feeds your base
+- After every run, **each Brainrot on your base gains XP equal to the run's score**.
+- Each level adds +25% of its base bonus. Lv 2 needs 2,500 XP, each level needs 2.2 times more than the last, and Lv 10 takes about 2.5M XP in total.
+- This is the loop: a higher multiplier means a higher score, which means more XP and level-ups, which means a higher multiplier. Every run improves your base, even a bad one.
+- Levels belong to each kind of Brainrot, so every copy of Tralalero shares one level. Pedestals show "Lv 7", and the Brainrots panel shows XP bars.
+
+### 🔥 Style combo: rewards focus
+Playing well builds a combo that multiplies your multiplier, from x1.0 up to **x3.0** (20 stacks):
+
+| Trick | Stacks |
+|---|---|
+| Clear an obstacle (jump over / roll under) | +1 |
+| **Near miss**: change lanes just before hitting something (within 0.5s) | +2 |
+| **Roof run**: land on a bus or tunnel roof | +2 |
+| Smash something / crash through a wall | +1 / +2 |
+| Every 15 coins | +1 |
+| Power-up / mystery box | +1 |
+| Rescue a Brainrot | +3 |
+
+The combo starts draining 2.5s after your last trick, a sideswipe halves it, and a crash resets it. The server owns the combo: the client reports tricks, each obstacle counts once, and it has to be where you are.
+
+### ⚡ Hype: your base charges while you're away
+- The Brainrots on your base charge **Hype** while you're offline (full in 8h) or hanging out in the lobby (full in 4h). Better bases charge faster, up to 3 times as fast.
+- A full charge gives **x2.5** on top of everything at the start of your next run. It's spent as you run, and a full charge lasts 1,000 m. Whatever you don't use is kept.
+- New players start fully hyped. The lobby wallet shows your Hype and when it'll be full, and your base sign shows `⚡ HYPE 64%`.
 
 ### 🔓 Brainrots
 Verity keeps them in cages on the tracks; run through a cage to rescue it. Rarer Brainrots only appear further into a run:
@@ -76,7 +107,7 @@ Verity keeps them in cages on the tracks; run through a cage to rescue it. Rarer
 Rescues are kept even if you get caught. Your best Brainrots automatically take the pedestals.
 
 ### 🪙 Coins (Subway Surfers style)
-- Every coin is worth **1**. A run earns a few hundred: coin lines between obstacles, arcs over barriers that match your jump exactly, and train-roof lines.
+- Every coin is worth **1**. A run earns a few hundred: coin lines between obstacles, arcs over barriers that match your jump exactly, and coin lines along the tops of buses and tunnels.
 - The big moments are the **🚀 Jetpack sky trail** (a hundred-plus coins) and **❓ Mystery Boxes** (100–1,500 coins or hoverboards).
 - Coins buy:
   - **Power-up upgrades.** 5 levels each, making them last longer: 500 / 1,500 / 3,500 / 7,500 / 15,000 coins.
@@ -89,21 +120,30 @@ Rescues are kept even if you get caught. Your best Brainrots automatically take 
 |---|---|---|
 | 🧲 Coin Magnet | pulls coins in | 10s → 20s |
 | 🚀 Jetpack | **fly** high over everything along a sky-coin trail, skipping that stretch | 6s → 12s |
-| 👟 Super Sneakers | huge jumps (onto trains) | 10s → 20s |
+| 👟 Super Sneakers | huge jumps: **onto buses and tunnel roofs** | 10s → 20s |
 | ✖️2 Score Booster | doubles your multiplier | 10s → 20s |
 
-A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It saves you from one crash by breaking instead.
+A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It **boosts your jump** high enough for buses and tunnel roofs, and it saves you from one crash by breaking instead.
 
 ### The chase
 Crashes let **Verity** close in. Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run.
 
-### The track: Brainrot City Rooftops
-You run across the roofs of the city at sunset, using Subway Surfers lanes but up high:
+### The track: Brainrot City streets
+You run down the middle of the road at sunset, with shops and apartment blocks on both sides. Sections:
 
-- **Roofs change height**: ramps climb to taller buildings, and you drop down to lower ones.
-- **Leap** buildings end in a gap. Jump it (the coins show the arc, and sometimes a plank bridges one lane). If you fall in, Verity gets you; a revive puts you on the next roof.
-- **You can stand on everything you can reach.** AC units, barriers, walls and billboards all have tops you can land on, and **rooftop sheds** can be run along via their ramps. With 👟 Super Sneakers you can hop onto almost anything.
-- Other sections: glass **penthouses**, **smash zones** (wooden walls), **bonus vaults** and **rescue cages**.
+- **Streets**: barriers to jump, signs to roll under, crates to smash.
+- **🚌 Buses**: switch lanes around them.
+- **🚇 Underpasses**: run straight through.
+- **Road works**: scaffolding beams to roll under, barriers to jump.
+- **Smash zones**: wooden walls.
+- **Bonus vaults** and **rescue cages**.
+
+**Jump boosts and roofs.** A normal jump peaks at about 9 studs. That clears barriers, but it can't reach a bus roof (12.5) or a tunnel roof (16). With a **jump boost** (👟 Super Sneakers or 🛹 a hoverboard) you can jump onto them and run across the top, where the best coin lines are. Notes:
+
+- The roof run also scores a combo bonus.
+- Time your jump: hit the tunnel entrance too low and you crash into it.
+- Inside a tunnel, the ceiling stops boosted jumps.
+- Sneakers often spawn just before buses and tunnels, and a sign marks each tunnel.
 
 Destruction is still in: small things smash, wooden walls break at high speed, and concrete chips with repeated hits.
 
@@ -116,7 +156,7 @@ With the 🚀 Jetpack your character flies Superman-style: tipped forward, one f
 ### Lobby & your base
 - The lobby is a blocky street with a conveyor loop, an ⬆️ Upgrades stall, a shop, daily rewards, the leaderboard, and a statue of Verity (WANTED).
 - Your base has:
-  - your pedestals, with a big **SCORE MULTIPLIER** sign; locked pedestals can be bought right there
+  - your pedestals, with a big **SCORE MULTIPLIER** sign (showing Hype too), with each Brainrot's level above it; locked pedestals can be bought right there
   - your high score
   - your personal run portal
 - The HUD buttons open everything from anywhere: Upgrades, Brainrots, Shop, Daily, Top, Stats, My Base.
@@ -126,29 +166,30 @@ With the 🚀 Jetpack your character flies Superman-style: tipped forward, one f
 ```
 src/
 ├── shared/                    ReplicatedStorage.Shared
-│   ├── Config.luau            ← all tuning: villain, score, coins, prices, power-ups, speeds, camera
+│   ├── Config.luau            ← all tuning: villain, score, levels, combo, Hype, coins, power-ups, speeds, camera
 │   ├── PowerUpData.luau       power-ups, durations per level, upgrade costs
 │   ├── BrainrotData.luau      Brainrots: multiplier bonus, rarity, where they appear
+│   ├── Progression.luau       Brainrot levels/XP, style combo, Hype (shared math)
 │   ├── DailyRewardData.luau   7-day reward track
 │   ├── ImpactRules.luau       crash rules + jump physics (shared client/server)
 │   ├── ModelFactory.luau      blocky Brainrot + villain models
 │   └── Remotes.luau · Signal.luau · Util.luau
 ├── server/                    ServerScriptService.Server
 │   ├── Main.server.luau
-│   ├── PlayerData.luau        profiles (coins, Brainrots, pedestals, upgrades, hoverboards, stats)
+│   ├── PlayerData.luau        profiles (coins, Brainrots + XP, Hype, pedestals, upgrades, hoverboards, stats)
 │   ├── Economy.luau           upgrades, pedestals, hoverboards, daily, Robux receipts
 │   ├── Leaderboards.luau      high score + other global boards
 │   ├── Lobby/LobbyBuilder.luau  the street, stalls, conveyors, statue
 │   ├── Lobby/PlotManager.luau   player bases: pedestals, multiplier sign, run portal
 │   └── Run/
-│       ├── RunManager.luau    run lifecycle, score, power-ups, rescues, revive, results
+│       ├── RunManager.luau    run lifecycle, score, combo, Hype, power-ups, rescues, XP, results
 │       ├── TrackGenerator.luau  generates segments ahead / recycles behind
-│       ├── Segments.luau      Brainrot City Rooftops segment library
+│       ├── Segments.luau      Brainrot City streets: buses, tunnels, obstacles
 │       └── Destruction.luau   breakable walls & debris
 └── client/                    StarterPlayerScripts.Client
     ├── Main.client.luau       lobby ⇄ run orchestration
     ├── InputController.luau   lanes / jump / roll / hoverboard (+ swipes, gamepad)
-    ├── RunController.luau     movement state machine, power-ups, score, collisions
+    ├── RunController.luau     movement state machine, power-ups, jump boosts, tricks, collisions
     ├── RunCamera.luau         chase camera (follows jetpack flights)
     ├── Chaser.luau            Verity + Sahur
     ├── DebrisFX.luau · LobbyFX.luau

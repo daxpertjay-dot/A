@@ -39,7 +39,7 @@ local function chaseCFrame(dt: number): CFrame
 
 	-- Sideways: follow the lane smoothly.
 	camX = Util.Lerp(camX, runner.X, Util.Damp(CAM.LaneFollowSharpness, dt))
-	-- Vertical: follow the ground level (train roofs) and part of each jump.
+	-- Vertical: follow the ground level (bus and tunnel roofs) and part of each jump.
 	-- While flying (jetpack) the camera rises with you.
 	local flying = state.move == "Flying"
 	local groundY = if state.grounded or flying then runner.Y else camBaseY

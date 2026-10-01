@@ -15,7 +15,12 @@
 --   RUNNING → CAUGHT (the villain got you)
 --
 -- Power-ups (🧲 magnet, 🚀 jetpack, 👟 super sneakers, ✖️2 booster) and the
--- 🛹 hoverboard are confirmed by the server and applied here.
+-- 🛹 hoverboard are confirmed by the server and applied here. Sneakers and the
+-- hoverboard boost your jump high enough to land on buses and tunnel roofs.
+--
+-- Tricks (clearing obstacles, last-second dodges, landing on a roof) are
+-- spotted here and reported to the server, which owns the style combo; the
+-- combo state below mirrors the server's.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -24,6 +29,7 @@ local RunService = game:GetService("RunService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Config = require(Shared.Config)
 local ImpactRules = require(Shared.ImpactRules)
+local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
 local Signal = require(Shared.Signal)
 local Util = require(Shared.Util)
@@ -73,6 +79,8 @@ local state = {
 	hoverboards = 0,
 	-- Score
 	multiplier = 1, -- from Brainrots on your base
+	combo = Progression.NewCombo(), -- mirrors the server's style combo
+	hype = 0, -- Hype charge left (spent as you run)
 	score = 0,
 	coins = 0,
 	meters = 0,
@@ -86,6 +94,7 @@ RunController.Impact = Signal.new() -- (outcome: string)
 RunController.CoinCollected = Signal.new()
 RunController.Event = Signal.new() -- (message: string, color: Color3?)
 RunController.PowerUpStarted = Signal.new() -- (id: string)
+RunController.Style = Signal.new() -- (kind: string, stacksGained: number) a combo change confirmed by the server
 
 local player = Players.LocalPlayer
 local character: Model? = nil
@@ -96,10 +105,11 @@ local trackFolder: Instance? = nil
 local board: BasePart? = nil
 local jetpack: Model? = nil
 local joints: { [string]: Motor6D } = {}
-local lastGroundY = 0
 -- How far the runner steps up onto something without jumping. Low on purpose:
--- you land on obstacle tops by jumping, you don't walk up them.
+-- you land on roofs by jumping, you don't walk up them.
 local STEP_UP = 1.6
+-- Top of the runner's head above its feet (for tunnel ceilings).
+local HEAD = R.HitboxHeight + 0.6
 
 -- Probe params are configured in Prepare(), once the server has registered
 -- the collision groups.
@@ -112,6 +122,10 @@ rayParams.FilterType = Enum.RaycastFilterType.Include
 local ignore: { [Instance]: number } = {}
 local coins: { BasePart } = {}
 local pickups: { BasePart } = {}
+-- Obstacles ahead, for spotting tricks as the runner passes them.
+type Tracked = { inst: Instance, d: number, lane: number, kind: string }
+local obstacles: { Tracked } = {}
+local lastDodge = { from = 0, time = -math.huge }
 local connections: { RBXScriptConnection } = {}
 local tracks: { [string]: AnimationTrack } = {}
 
@@ -226,6 +240,11 @@ local function register(d: Instance)
 		elseif d:GetAttribute("Pickup") then
 			table.insert(pickups, d)
 		end
+	elseif d:IsA("Model") then
+		local trackD, lane, kind = d:GetAttribute("TrackD"), d:GetAttribute("Lane"), d:GetAttribute("ObstacleType")
+		if type(trackD) == "number" and type(lane) == "number" and type(kind) == "string" and not d:GetAttribute("NoStyle") then
+			table.insert(obstacles, { inst = d, d = trackD, lane = lane, kind = kind })
+		end
 	end
 end
 
@@ -270,21 +289,40 @@ local function onBoard(): boolean
 	return now() < state.hoverUntil
 end
 
--- Current score multiplier: base (Brainrots) × 2 while the booster runs.
+-- Current score multiplier: base (Brainrots) × ✖️2 booster × combo × Hype.
 function RunController.CurrentMultiplier(): number
-	return state.multiplier * (if now() < state.boosterUntil then 2 else 1)
+	local booster = if now() < state.boosterUntil then 2 else 1
+	return state.multiplier * booster * Progression.ComboMultiplier(state.combo) * Progression.HypeMultiplier(state.hype)
 end
 
-local function probeGround(x: number, d: number, fromY: number): number?
+-- Height of whatever you'd stand on below `fromY` (and the part itself).
+local function probeGround(x: number, d: number, fromY: number): (number?, BasePart?)
 	if not trackFolder then
-		return nil
+		return nil, nil
 	end
 	local origin = state.origin + Vector3.new(x, fromY, -d)
 	local result = workspace:Raycast(origin, Vector3.new(0, -80, 0), rayParams)
 	if result then
+		return result.Position.Y - state.origin.Y, result.Instance :: BasePart
+	end
+	return nil, nil
+end
+
+-- Underside of anything standable above `fromY` (a tunnel roof).
+local function probeCeiling(x: number, d: number, fromY: number): number?
+	if not trackFolder then
+		return nil
+	end
+	local origin = state.origin + Vector3.new(x, fromY, -d)
+	local result = workspace:Raycast(origin, Vector3.new(0, 40, 0), rayParams)
+	if result then
 		return result.Position.Y - state.origin.Y
 	end
 	return nil
+end
+
+local function reportTrick(kind: string, object: Instance)
+	Remotes.Event("ReportStyle"):FireServer(kind, object)
 end
 
 -- ───────────────────────────── actions ─────────────────────────────
@@ -295,6 +333,10 @@ local function changeLane(dir: number)
 		addShake(0.25)
 		return
 	end
+	-- Remember the dodge: passing something in the old lane right after
+	-- leaving it is a near miss.
+	lastDodge.from = state.lane
+	lastDodge.time = now()
 	-- Start from wherever we currently are between lanes.
 	local currentX = state.x
 	state.fromLane = state.lane
@@ -317,8 +359,16 @@ local function jump()
 	state.rollTime = 0
 	state.queuedRoll = false
 	state.jumpBufferedUntil = 0
-	local sneakers = now() < state.sneakersUntil
-	state.vy = R.JumpVelocity * (if sneakers then P.SneakersJumpMultiplier else 1)
+	-- Jump boosts: 👟 sneakers or riding a 🛹 hoverboard (high enough for
+	-- bus and tunnel roofs).
+	local boost = 1
+	if now() < state.sneakersUntil then
+		boost = math.max(boost, P.SneakersJumpMultiplier)
+	end
+	if onBoard() then
+		boost = math.max(boost, P.HoverboardJumpMultiplier)
+	end
+	state.vy = R.JumpVelocity * boost
 	state.grounded = false
 end
 
@@ -375,6 +425,7 @@ local function onObstacle(obstacle: Instance, part: BasePart)
 		end
 		ignore[obstacle] = t + 0.5
 		loseGap(C.GapLoss.SideBump)
+		state.combo.stacks /= 2 -- predicted; the server confirms
 		addShake(0.4)
 		RunController.Impact:Fire("Side")
 		Remotes.Event("ReportHit"):FireServer(obstacle, { side = true })
@@ -415,6 +466,7 @@ local function onObstacle(obstacle: Instance, part: BasePart)
 		state.rollTime = 0
 		state.d -= C.BumpPushback
 		loseGap(C.GapLoss.Bump)
+		state.combo.stacks = 0 -- predicted; the server confirms
 		addShake(1.3)
 		RunController.Event:Fire(if tier >= 4 then "😵 OUCH!" else "😵 CRASH! (keep hitting it…)", Color3.fromRGB(255, 90, 90))
 	end
@@ -439,6 +491,43 @@ local function checkCollisions(prevD: number)
 			if state.staggerTime > 0 then
 				break
 			end
+		end
+	end
+end
+
+-- ───────────────────────────── tricks (style combo) ─────────────────────────────
+
+-- Called when the runner passes the front of an obstacle it didn't hit.
+local function judgePass(o: Tracked, t: number)
+	if ignore[o.inst] or o.inst:GetAttribute("Destroyed") or t < state.invulnerableUntil then
+		return
+	end
+	if o.lane == state.lane then
+		local cleared = if o.kind == "Jump" then (not state.grounded or state.feetY > 2)
+			elseif o.kind == "Roll" then isRolling()
+			else state.feetY > 3 -- over a wall / bus with a jump boost
+		if cleared then
+			reportTrick("Clear", o.inst)
+		end
+	elseif o.lane == lastDodge.from and t - lastDodge.time <= Config.Combo.NearMissWindow then
+		reportTrick("NearMiss", o.inst)
+	end
+end
+
+local function checkTricks(prevD: number)
+	local flying = isFlying()
+	local t = now()
+	local i = 1
+	while i <= #obstacles do
+		local o = obstacles[i]
+		if o.inst.Parent == nil or o.d < state.d - 30 then
+			obstacles[i] = obstacles[#obstacles]
+			obstacles[#obstacles] = nil
+		else
+			if not flying and prevD < o.d and state.d >= o.d then
+				judgePass(o, t)
+			end
+			i += 1
 		end
 	end
 end
@@ -701,8 +790,11 @@ local function update(dt: number)
 	state.d += state.speed * dt
 
 	-- Score: meters × multiplier (mirrors the server, which is authoritative).
-	local gained = math.max(0, state.d - prevD) * R.MetersPerStud * Config.Score.PointsPerMeter
-	state.score += gained * RunController.CurrentMultiplier()
+	-- Hype is spent as you go; the combo drains when you play it safe.
+	local meters = math.max(0, state.d - prevD) * R.MetersPerStud
+	state.score += meters * Config.Score.PointsPerMeter * RunController.CurrentMultiplier()
+	state.hype = math.max(0, state.hype - meters * Progression.HypeDrainPerMeter())
+	Progression.ComboDecay(state.combo, t, dt)
 
 	-- Lane interpolation
 	local prevX = state.x
@@ -724,16 +816,28 @@ local function update(dt: number)
 		state.invulnerableUntil = math.max(state.invulnerableUntil, state.jetpackUntil + P.JetpackLandingInvulnerability)
 	else
 		-- Vertical movement against the ground
+		local prevFeet = state.feetY
 		state.vy -= R.Gravity * dt
 		state.feetY += state.vy * dt
-		local ground = probeGround(state.x, state.d, math.max(state.feetY, state.feetY - state.vy * dt) + STEP_UP)
+		if state.vy > 0 then
+			-- Bonk your head on a tunnel ceiling instead of passing through it.
+			local ceiling = probeCeiling(state.x, state.d, prevFeet + 0.5)
+			if ceiling and state.feetY + HEAD > ceiling and prevFeet + HEAD <= ceiling + 0.05 then
+				state.feetY = ceiling - HEAD
+				state.vy = 0
+			end
+		end
+		local ground, groundPart = probeGround(state.x, state.d, math.max(state.feetY, prevFeet) + STEP_UP)
 		state.groundY = ground or -math.huge
 		if ground and state.vy <= 0 and state.feetY <= ground + 0.05 then
 			state.feetY = ground
 			state.vy = 0
 			local justLanded = not state.grounded
 			state.grounded = true
-			lastGroundY = ground
+			if justLanded and ground >= R.HighGround and groundPart then
+				-- Landed on a bus / tunnel roof.
+				reportTrick("Roof", groundPart)
+			end
 			if justLanded and t < state.jumpBufferedUntil then
 				jump()
 			elseif justLanded and state.queuedRoll then
@@ -760,18 +864,12 @@ local function update(dt: number)
 	end
 
 	checkCollisions(prevD)
+	checkTricks(prevD)
 	updateCollectibles(dt)
 
 	-- Chase pressure
 	if state.staggerTime <= 0 then
 		state.gap = math.min(C.MaxGap, state.gap + C.RecoverPerSecond * dt)
-	end
-	if state.feetY < lastGroundY - 18 and not flying then
-		-- Fell off the roof into a gap: Verity grabs you.
-		if state.gap > 0 then
-			RunController.Event:Fire("😱 YOU FELL!", Color3.fromRGB(255, 90, 90))
-		end
-		state.gap = 0
 	end
 	if state.gap <= 0 then
 		state.gap = 0
@@ -813,12 +911,13 @@ function RunController.Prepare(info: any): boolean
 	state.speedFactor = 1
 	state.speed = 0
 	state.gap = C.StartGap
-	lastGroundY = 0
 	state.invulnerableUntil = 0
 	state.magnetUntil, state.jetpackUntil, state.sneakersUntil, state.boosterUntil, state.hoverUntil = 0, 0, 0, 0, 0
 	table.clear(state.durations)
 	state.hoverboards = info.hoverboards or 0
 	state.multiplier = info.multiplier or 1
+	state.combo = Progression.NewCombo()
+	state.hype = info.hype or 0
 	state.score = 0
 	state.coins = 0
 	state.meters = 0
@@ -827,6 +926,8 @@ function RunController.Prepare(info: any): boolean
 	table.clear(ignore)
 	table.clear(coins)
 	table.clear(pickups)
+	table.clear(obstacles)
+	lastDodge.time = -math.huge
 
 	for _, d in (info.trackFolder :: Instance):GetDescendants() do
 		register(d)
@@ -848,21 +949,8 @@ function RunController.Go()
 end
 
 function RunController.Revive()
-	-- If you fell into a gap, continue from the next roof.
-	if not probeGround(state.x, state.d, lastGroundY + 20) or state.feetY < lastGroundY - 4 then
-		for ahead = 4, 120, 4 do
-			local g = probeGround(state.x, state.d + ahead, 60)
-			if g then
-				state.d += ahead + 2
-				state.feetY = g
-				lastGroundY = g
-				state.vy = 0
-				state.grounded = true
-				break
-			end
-		end
-	end
 	state.phase = "Running"
+	state.combo.stacks = 0
 	state.gap = C.RevivedGap
 	state.invulnerableUntil = now() + C.RevivedInvulnerability
 	state.staggerTime = 0
@@ -885,17 +973,17 @@ function RunController.HandleWorldEvent(event: any)
 			RunController.Event:Fire("🚀 JETPACK!", Color3.fromRGB(255, 190, 60))
 		elseif event.id == "SuperSneakers" then
 			state.sneakersUntil = until_
-			RunController.Event:Fire("👟 SUPER SNEAKERS!", Color3.fromRGB(120, 255, 140))
+			RunController.Event:Fire("👟 SUPER SNEAKERS! Jump onto buses & tunnels!", Color3.fromRGB(120, 255, 140))
 		elseif event.id == "ScoreBooster" then
 			state.boosterUntil = until_
-			RunController.Event:Fire(("✖️2 SCORE BOOSTER! (x%d)"):format(state.multiplier * 2), Color3.fromRGB(110, 190, 255))
+			RunController.Event:Fire("✖️2 SCORE BOOSTER!", Color3.fromRGB(110, 190, 255))
 		end
 		RunController.PowerUpStarted:Fire(event.id)
 	elseif event.type == "Hoverboard" then
 		state.hoverUntil = t + event.duration
 		state.durations.Hoverboard = event.duration
 		state.hoverboards = event.left
-		RunController.Event:Fire("🛹 HOVERBOARD!", Color3.fromRGB(120, 200, 255))
+		RunController.Event:Fire("🛹 HOVERBOARD! Big jumps + one free crash", Color3.fromRGB(120, 200, 255))
 	elseif event.type == "HoverboardBroken" then
 		state.hoverUntil = 0
 	elseif event.type == "MysteryBox" then
@@ -905,7 +993,14 @@ function RunController.HandleWorldEvent(event: any)
 		end
 		RunController.Event:Fire(text, Color3.fromRGB(255, 200, 60))
 	elseif event.type == "BrainrotRescued" then
-		RunController.Event:Fire(("🔓 RESCUED %s %s! (+%dx multiplier)"):format(event.icon, string.upper(event.name), event.bonus), Color3.fromRGB(255, 140, 230))
+		RunController.Event:Fire(("🔓 RESCUED %s %s!"):format(event.icon, string.upper(event.name)), Color3.fromRGB(255, 140, 230))
+	elseif event.type == "Combo" then
+		-- The server owns the combo; adopt its value.
+		state.combo.stacks = event.stacks
+		if (event.gained or 0) > 0 then
+			state.combo.lastAction = t
+		end
+		RunController.Style:Fire(event.kind, event.gained or 0)
 	end
 end
 

@@ -6,7 +6,7 @@
 --          │  🏆 high score              │
 --          │ [🧠][🧠][🧠][🔒][🔒]         │  ← rescued Brainrots on pedestals:
 --          │ [🧠][🧠][🧠][🔒][🔒]         │     each adds to your SCORE MULTIPLIER
---          │   ⭐ SCORE MULTIPLIER x7     │
+--          │   ⭐ SCORE MULTIPLIER x7     │  ← plus ⚡ Hype charging up
 --   front  └──────── "Jay's BASE" ──────┘  ← faces the street
 --
 -- Plot local space: -Z points at the street, +X runs along it.
@@ -18,6 +18,7 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local ModelFactory = require(Shared.ModelFactory)
+local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
 local Util = require(Shared.Util)
 
@@ -184,19 +185,28 @@ local function refresh(plot: Plot)
 	local owner = plot.owner
 	local profile = if owner then PlayerData.Get(owner) else nil
 	local displayed = if profile then PlayerData.DisplayedBrainrots(profile) else {}
-	local signature = if owner and profile
-		then table.concat({ owner.Name, table.concat(displayed, ","), tostring(profile.Pedestals), tostring(math.floor(profile.Stats.HighScore)) }, "|")
-		else ""
+
+	-- Signs update every time (Hype charges continuously).
+	plot.signLabel.Text = if owner then ("%s's BASE"):format(owner.DisplayName) else "EMPTY PLOT"
+	plot.bestLabel.Text = if profile then ("🏆 HIGH SCORE: %s"):format(Util.FormatNumber(profile.Stats.HighScore)) else "🏆 HIGH SCORE: -"
+	plot.multiplierLabel.Text = if profile
+		then ("⭐ SCORE MULTIPLIER %s\n⚡ HYPE %d%%"):format(Progression.FormatMultiplier(PlayerData.Multiplier(profile)), math.floor(profile.Hype * 100))
+		else "⭐ SCORE MULTIPLIER"
+	plot.trigger:SetAttribute("OwnerUserId", if owner then owner.UserId else 0)
+
+	-- The Brainrots themselves are only rebuilt when they change.
+	local levels = {}
+	if profile then
+		for _, id in displayed do
+			table.insert(levels, tostring((Progression.Level(profile.BrainrotXP[id]))))
+		end
+	end
+	local signature = if owner and profile then table.concat({ owner.Name, table.concat(displayed, ","), table.concat(levels, ","), tostring(profile.Pedestals) }, "|") else ""
 	if signature == plot.signature then
 		return
 	end
 	plot.signature = signature
 	plot.dynamic:ClearAllChildren()
-
-	plot.signLabel.Text = if owner then ("%s's BASE"):format(owner.DisplayName) else "EMPTY PLOT"
-	plot.bestLabel.Text = if profile then ("🏆 HIGH SCORE: %s"):format(Util.FormatNumber(profile.Stats.HighScore)) else "🏆 HIGH SCORE: -"
-	plot.multiplierLabel.Text = if profile then ("⭐ SCORE MULTIPLIER x%d"):format(PlayerData.Multiplier(profile)) else "⭐ SCORE MULTIPLIER"
-	plot.trigger:SetAttribute("OwnerUserId", if owner then owner.UserId else 0)
 	if not owner or not profile then
 		return
 	end
@@ -211,7 +221,8 @@ local function refresh(plot: Plot)
 			model.Parent = plot.dynamic
 			CollectionService:AddTag(model, "LobbyDance")
 			model:SetAttribute("Style", "Hop")
-			label(model, ("%s %s\n+%dx SCORE"):format(data.icon, data.name, data.bonus), BrainrotData.RarityColors[data.rarity], 9)
+			local level = Progression.Level(profile.BrainrotXP[data.id])
+			label(model, ("%s %s  Lv %d\n+%s SCORE"):format(data.icon, data.name, level, Progression.FormatMultiplier(PlayerData.BrainrotBonus(profile, data.id))), BrainrotData.RarityColors[data.rarity], 9)
 		else
 			local marker = part({ Parent = plot.dynamic, Name = "SlotMarker", Size = Vector3.new(6.6, 0.2, 6.6), CFrame = pedestalCf * CFrame.new(0, -0.15, 0), Transparency = 0.5, CanCollide = false, Studs = false, Color = Color3.fromRGB(255, 255, 255) })
 			if i <= profile.Pedestals then

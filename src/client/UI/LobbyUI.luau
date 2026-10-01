@@ -12,6 +12,7 @@ local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local DailyRewardData = require(Shared.DailyRewardData)
 local PowerUpData = require(Shared.PowerUpData)
+local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
 local Util = require(Shared.Util)
 
@@ -25,6 +26,7 @@ local hud: Frame
 local coinsLabel: TextLabel
 local multiplierLabel: TextLabel
 local boardsLabel: TextLabel
+local hypeLabel: TextLabel
 local toastHolder: Frame
 local data: any = nil
 
@@ -185,15 +187,23 @@ local function buildBrainrots(content: Frame)
 	local owned = if data then data.Brainrots else {}
 	local displayed = if data then data.Displayed else {}
 	local pedestals = if data then data.Pedestals else 0
+	local xpTable = if data then data.BrainrotXP or {} else {}
 	UIKit.Label({
-		Text = ("⭐ SCORE MULTIPLIER x%d   ·   🏛️ %d / %d pedestals used"):format(if data then data.Multiplier else 1, #displayed, pedestals),
+		Text = ("⭐ SCORE MULTIPLIER %s   ·   🏛️ %d / %d pedestals used"):format(Progression.FormatMultiplier(if data then data.Multiplier else 1), #displayed, pedestals),
 		TextColor3 = C.Gold,
 		Size = UDim2.new(1, 0, 0, 30),
 		Parent = content,
 	})
-	UIKit.Label({ Text = ("Rescue Brainrots from %s's cages on runs. Your best ones stand on your pedestals and add to your multiplier."):format(Config.Villain.Title), TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 32), Parent = content })
-	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -58), Position = UDim2.fromOffset(0, 58) })
-	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(170, 190), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+	UIKit.Label({
+		Text = ("Rescue Brainrots from %s's cages on runs. Your best ones stand on your pedestals and add to your multiplier — and every run's score is XP that levels them up."):format(Config.Villain.Title),
+		TextColor3 = C.Muted,
+		TextWrapped = true,
+		Size = UDim2.new(1, 0, 0, 34),
+		Position = UDim2.fromOffset(0, 32),
+		Parent = content,
+	})
+	local grid = UIKit.Scroller(content, { Size = UDim2.new(1, 0, 1, -72), Position = UDim2.fromOffset(0, 72) })
+	UIKit.New("UIGridLayout", { CellSize = UDim2.fromOffset(170, 222), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
 	local onPedestal: { [string]: number } = {}
 	for _, id in displayed do
 		onPedestal[id] = (onPedestal[id] or 0) + 1
@@ -209,7 +219,22 @@ local function buildBrainrots(content: Frame)
 		UIKit.Label({ Text = if have then b.icon else "❓", Size = UDim2.new(1, 0, 0, 56), Position = UDim2.fromOffset(0, 6), Parent = card })
 		UIKit.Label({ Text = if have then ("%s  x%d"):format(b.name, count) else "???", Size = UDim2.new(1, -8, 0, 22), Position = UDim2.fromOffset(4, 64), Parent = card })
 		UIKit.Label({ Text = string.upper(b.rarity), Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 88), TextColor3 = rarityColor, Parent = card })
-		UIKit.Label({ Text = ("⭐ +%dx multiplier"):format(b.bonus), Size = UDim2.new(1, 0, 0, 22), Position = UDim2.fromOffset(0, 110), TextColor3 = C.Good, Parent = card })
+		local level, into, need = Progression.Level(xpTable[b.id])
+		UIKit.Label({
+			Text = if have then ("Lv %d  ·  ⭐ +%s"):format(level, Progression.FormatMultiplier(Progression.BonusAt(b.id, level))) else ("⭐ +%s multiplier"):format(Progression.FormatMultiplier(b.bonus)),
+			Size = UDim2.new(1, 0, 0, 22),
+			Position = UDim2.fromOffset(0, 110),
+			TextColor3 = C.Good,
+			Parent = card,
+		})
+		if have then
+			-- XP bar towards the next level
+			local track = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(30, 30, 40), Position = UDim2.new(0, 10, 0, 136), Size = UDim2.new(1, -20, 0, 10), Parent = card })
+			UIKit.Corner(5).Parent = track
+			local fill = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(190, 150, 255), Size = UDim2.fromScale(if need then math.clamp(into / need, 0, 1) else 1, 1), Parent = track })
+			UIKit.Corner(5).Parent = fill
+			UIKit.Label({ Text = if need then ("%s / %s XP"):format(Util.FormatNumber(into), Util.FormatNumber(need)) else "MAX LEVEL", Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 148), TextColor3 = C.Muted, Parent = card })
+		end
 		local status
 		if b.catchWeight == 0 then
 			status = ("%s's henchman — can't be rescued"):format(Config.Villain.Title)
@@ -220,7 +245,7 @@ local function buildBrainrots(content: Frame)
 		else
 			status = "Not on a pedestal — buy more!"
 		end
-		UIKit.Label({ Text = status, Size = UDim2.new(1, -10, 0, 40), Position = UDim2.fromOffset(5, 138), TextColor3 = C.Muted, TextWrapped = true, Parent = card })
+		UIKit.Label({ Text = status, Size = UDim2.new(1, -10, 0, 40), Position = UDim2.fromOffset(5, 170), TextColor3 = C.Muted, TextWrapped = true, Parent = card })
 	end
 end
 
@@ -343,7 +368,8 @@ local function buildStats(content: Frame)
 	end
 	local rows = {
 		{ "🏆 High Score", Util.FormatNumber(stats.HighScore or 0) },
-		{ "⭐ Score Multiplier", "x" .. (if data then data.Multiplier else 1) },
+		{ "⭐ Score Multiplier", Progression.FormatMultiplier(if data then data.Multiplier else 1) },
+		{ "⚡ Hype", ("%d%%  (%s next run)"):format(math.floor((if data then data.Hype or 0 else 0) * 100), Progression.FormatMultiplier(Progression.HypeMultiplier(if data then data.Hype or 0 else 0))) },
 		{ "📏 Furthest Run", Util.FormatNumber(stats.BestDistance or 0) .. "m" },
 		{ "🔓 Brainrots Rescued", Util.FormatNumber(stats.BrainrotsRescued or 0) },
 		{ "🧠 Different Brainrots", ("%d / %d"):format(found, #BrainrotData.List) },
@@ -368,7 +394,14 @@ function LobbyUI.SetData(snapshot: any)
 	end
 	data = snapshot
 	coinsLabel.Text = "🪙 " .. Util.FormatNumber(snapshot.Coins)
-	multiplierLabel.Text = ("⭐ Score multiplier x%d"):format(snapshot.Multiplier or 1)
+	multiplierLabel.Text = ("⭐ Score multiplier %s"):format(Progression.FormatMultiplier(snapshot.Multiplier or 1))
+	local hype = snapshot.Hype or 0
+	if hype >= 1 then
+		hypeLabel.Text = ("⚡ FULLY HYPED! %s next run"):format(Progression.FormatMultiplier(Progression.HypeMultiplier(1)))
+	else
+		local hoursLeft = (1 - hype) / math.max(snapshot.HypePerHour or 0.25, 1e-6)
+		hypeLabel.Text = ("⚡ Hype %d%%  ·  full in %s"):format(math.floor(hype * 100), if hoursLeft >= 1 then ("%.1fh"):format(hoursLeft) else ("%dm"):format(math.max(1, math.ceil(hoursLeft * 60))))
+	end
 	boardsLabel.Text = ("🛹 %d hoverboard%s"):format(snapshot.Hoverboards or 0, if snapshot.Hoverboards == 1 then "" else "s")
 	refreshOpen()
 end
@@ -385,7 +418,7 @@ function LobbyUI.Init(playerGui: PlayerGui)
 	hud = UIKit.New("Frame", { Name = "HUD", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = gui })
 
 	-- Wallet (top left)
-	local wallet = UIKit.New("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.15, Position = UDim2.fromOffset(16, 60), Size = UDim2.fromOffset(270, 104), Parent = hud })
+	local wallet = UIKit.New("Frame", { BackgroundColor3 = C.Panel, BackgroundTransparency = 0.15, Position = UDim2.fromOffset(16, 60), Size = UDim2.fromOffset(290, 130), Parent = hud })
 	UIKit.Corner(14).Parent = wallet
 	UIKit.Stroke(3, C.Gold).Parent = wallet
 	UIKit.Padding(8).Parent = wallet
@@ -393,6 +426,7 @@ function LobbyUI.Init(playerGui: PlayerGui)
 	coinsLabel = UIKit.Label({ Text = "🪙 …", Size = UDim2.new(1, 0, 0, 36), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gold, Parent = wallet })
 	multiplierLabel = UIKit.Label({ Text = "⭐ …", Size = UDim2.new(1, 0, 0, 22), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(255, 200, 60), Parent = wallet })
 	boardsLabel = UIKit.Label({ Text = "🛹 …", Size = UDim2.new(1, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(120, 200, 255), Parent = wallet })
+	hypeLabel = UIKit.Label({ Text = "⚡ …", Size = UDim2.new(1, 0, 0, 20), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Accent2, Parent = wallet })
 
 	-- Big simulator-style buttons down the left side.
 	local bar = UIKit.New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.58, 0), Size = UDim2.fromOffset(170, 360), Parent = hud })

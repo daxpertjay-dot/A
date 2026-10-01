@@ -11,7 +11,7 @@ local EVENTS = {
 	"Notify", -- (text, color?) toast message
 	"RunStarting", -- () fade to "RUN STARTING..."
 	"RunPrepare", -- (runInfo) sets up the client run controller
-	"RunWorld", -- (event) power-ups, mystery boxes, rescues, hoverboard
+	"RunWorld", -- (event) power-ups, mystery boxes, rescues, hoverboard, combo
 	"RunDebris", -- (pieces) client-side debris to simulate
 	"RunCaught", -- (reviveInfo) the player was caught; offer revive
 	"RunRevived", -- () continue running
@@ -22,6 +22,7 @@ local EVENTS = {
 	"ReportHit", -- (object, impactInfo)
 	"CollectCoin", -- (coinPart)
 	"PickupItem", -- (pickupPart) power-up, mystery box or caged Brainrot
+	"ReportStyle", -- (kind, object) a trick for the combo: "Clear" | "NearMiss" | "Roof"
 	"UseHoverboard", -- ()
 	"ReportCaught", -- ()
 	"ChooseRevive", -- ("Coins" | "Robux" | false)

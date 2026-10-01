@@ -4,8 +4,9 @@
 -- tuned without touching gameplay code.
 --
 -- The game in one line: escape the villain, grab coins and power-ups,
--- rescue caged Brainrots. Brainrots on your base raise your SCORE MULTIPLIER;
--- coins buy upgrades.
+-- rescue caged Brainrots. Brainrots on your base raise your SCORE MULTIPLIER
+-- (and level up from your score), style builds a combo, your base charges
+-- Hype while you're away; coins buy upgrades.
 
 local Config = {}
 
@@ -47,6 +48,54 @@ Config.Score = {
 	StartingPedestals = 3,
 	MaxPedestals = 10,
 	PedestalCosts = { 750, 1500, 3000, 5000, 8000, 12000, 20000 }, -- cost of pedestal #4, #5, ...
+}
+
+-- ───────────────────────────── BRAINROT LEVELS ─────────────────────────────
+-- After every run, each Brainrot on your base gains XP equal to the run's
+-- score. Each level adds BonusPerLevel × its base bonus to the multiplier
+-- (a +2x Brainrot is +2.5x at Lv 2, +3x at Lv 3 … +6.5x at Lv 10).
+Config.Levels = {
+	MaxLevel = 10,
+	XPBase = 2500, -- XP from Lv 1 to Lv 2
+	XPGrowth = 2.2, -- each level needs this much more than the last (Lv 10 ≈ 2.5M total)
+	BonusPerLevel = 0.25,
+}
+
+-- ───────────────────────────── STYLE COMBO ─────────────────────────────
+-- Playing well during a run builds a combo that multiplies your multiplier.
+-- It drains if you play it safe and resets when you crash.
+Config.Combo = {
+	PerStack = 0.1, -- multiplier per stack (20 stacks = x3)
+	MaxStacks = 20,
+	Grace = 2.5, -- seconds after a trick before the combo starts draining
+	DecayPerSecond = 2.5, -- stacks lost per second once draining
+	CoinsPerStack = 15, -- every this many coins in a row = +1
+	NearMissWindow = 0.5, -- dodge within this many seconds of reaching it
+	Points = {
+		Clear = 1, -- jumped over / rolled under something
+		NearMiss = 2, -- last-second lane dodge
+		Roof = 2, -- landed on a bus / tunnel roof
+		Smash = 1,
+		CrashThrough = 2,
+		Coins = 1,
+		PowerUp = 1,
+		MysteryBox = 1,
+		Rescue = 3,
+	} :: { [string]: number },
+}
+
+-- ───────────────────────────── HYPE ─────────────────────────────
+-- The Brainrots on your base charge up Hype while you're offline or hanging
+-- out in the lobby. Hype boosts the start of your next run and is spent as
+-- you run (a full charge lasts MetersAtFull meters).
+Config.Hype = {
+	MaxBonus = 1.5, -- full Hype = x2.5 on top of your multiplier
+	MetersAtFull = 1000,
+	OfflineHoursToFull = 8,
+	LobbyHoursToFull = 4, -- charges twice as fast while you're in the server
+	SpeedupPerMultiplier = 0.05, -- better bases charge faster…
+	MaxSpeedup = 3, -- …up to 3x as fast
+	StartingHype = 1, -- new players start fully hyped
 }
 
 -- ───────────────────────────── COINS ─────────────────────────────
@@ -91,9 +140,11 @@ Config.Run = {
 	},
 	MetersPerStud = 1,
 
-	-- Jump / roll
+	-- Jump / roll. A normal jump peaks at ~9 studs: enough for barriers, not
+	-- for buses (12.5) or tunnel roofs (16) — those need a jump boost.
 	Gravity = 150,
 	JumpVelocity = 52,
+	HighGround = 9, -- anything you stand on this high counts as a "roof"
 	FastFallVelocity = -110, -- pressing roll mid-air slams you down (Subway Surfers style)
 	RollDuration = 0.7,
 	JumpBuffer = 0.18, -- a jump pressed this long before landing still fires on landing
@@ -128,10 +179,11 @@ Config.Run = {
 Config.PowerUps = {
 	SpawnChancePerSegment = 0.45,
 	MagnetRadius = 26,
-	JetpackHeight = 32, -- studs above the run's base level while flying (roofs go up to 12)
+	JetpackHeight = 32, -- studs above the street while flying (tunnel roofs are 16)
 	JetpackSpeedMultiplier = 1.25,
 	JetpackLandingInvulnerability = 1.5,
-	SneakersJumpMultiplier = 1.45, -- jump velocity with Super Sneakers
+	SneakersJumpMultiplier = 1.45, -- jump velocity with Super Sneakers (reach ~19 studs)
+	HoverboardJumpMultiplier = 1.4, -- riding a hoverboard also boosts jumps (~17.7 studs)
 	HoverboardDuration = 30,
 	HoverboardInvulnerability = 1.5, -- after the board breaks
 }

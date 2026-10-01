@@ -1,16 +1,18 @@
 --!strict
--- The track: BRAINROT CITY ROOFTOPS at sunset. You run across the roofs of
--- the city's buildings (Subway Surfers lanes, but up high): roofs change
--- height with ramps, some end in a gap you have to leap, rooftop sheds can be
--- run on, and every obstacle has a top you can land on. Fall into a gap and
--- Verity gets you.
+-- The track: BRAINROT CITY STREETS at sunset. Three lanes down the middle of
+-- the road (Subway Surfers style), shops and apartment blocks on both sides,
+-- Verity chasing you.
+--
+-- Tall things — buses and tunnels — are too high for a normal jump (it peaks
+-- at ~9 studs). With a JUMP BOOST (👟 Super Sneakers or 🛹 a hoverboard) you
+-- can jump onto their roofs and run across the top, where the best coin lines
+-- are. Without one, switch lanes round a bus or run through the tunnel.
 --
 -- Track space: `d` is distance along the run (forward = world -Z), `x` is the
--- sideways offset from the centre lane, `y` is height above THIS segment's
--- roof (ctx.height is added automatically).
+-- sideways offset from the centre lane, `y` is height above the road.
 --
 -- Collision groups (registered in TrackGenerator):
---   RunGround   – anything the runner can stand on (roofs, ramps, tops)
+--   RunGround   – anything the runner can stand on (road, bus/tunnel roofs)
 --   RunObstacle – anything the runner can crash into
 -- Scenery stays in Default so the runner's probes ignore it.
 
@@ -29,13 +31,20 @@ local Segments = {}
 local LANES = Config.Run.LanePositions
 local LANE_IDS = { -1, 0, 1 }
 local ROAD_WIDTH = 30
-local RAMP_LENGTH = 20
-local STREET_Y = -75 -- the street far below (relative to the run origin)
+local SIDEWALK = 8
+
+-- Boost-only heights. A normal jump peaks at ~9 (head at ~14.6), so the
+-- tunnel ceiling sits above that and both roofs sit above the jump.
+local BUS_HEIGHT = 12 -- body; the roof you land on is at 12.5
+local BUS_LENGTH = 38
+local TUNNEL_CEILING = 15 -- underside of the tunnel roof
+local TUNNEL_ROOF = 16 -- top of the tunnel roof
 
 local THEME = {
-	Roof = Color3.fromRGB(78, 74, 82),
-	RoofLine = Color3.fromRGB(235, 220, 170),
-	Parapet = Color3.fromRGB(200, 185, 170),
+	Road = Color3.fromRGB(58, 58, 66),
+	LaneLine = Color3.fromRGB(240, 240, 235),
+	Sidewalk = Color3.fromRGB(200, 190, 180),
+	Curb = Color3.fromRGB(150, 145, 140),
 	Coin = Color3.fromRGB(255, 200, 40),
 	Buildings = {
 		Color3.fromRGB(214, 120, 96),
@@ -46,9 +55,11 @@ local THEME = {
 		Color3.fromRGB(170, 160, 140),
 	},
 	Neon = { Color3.fromRGB(255, 90, 170), Color3.fromRGB(90, 220, 255), Color3.fromRGB(255, 200, 60), Color3.fromRGB(160, 255, 110) },
+	Bus = { Color3.fromRGB(255, 200, 40), Color3.fromRGB(230, 70, 80), Color3.fromRGB(70, 150, 230) },
 }
 
-local BILLBOARDS = { "TRALALERO TRALALA", "BOMBARDIRO CROCODILO", "BRR BRR PATAPIM", "CAPPUCCINO ASSASSINO", "WANTED: VERITY", "CHIMPANZINI BANANINI", "LIRILÌ LARILÀ" }
+local SHOP_SIGNS = { "TRALALERO PIZZA", "BOMBARDIRO TRAVEL", "PATAPIM SHOES", "CAPPUCCINO CAFÉ", "LIRILÌ GROCERY", "BANANINI SMOOTHIES", "BALLERINA DANCE", "TRIPPI TOYS" }
+local BILLBOARDS = { "TRALALERO TRALALA", "BOMBARDIRO CROCODILO", "BRR BRR PATAPIM", "CAPPUCCINO ASSASSINO", "WANTED: VERITY", "CHIMPANZINI BANANINI" }
 
 export type Ctx = {
 	folder: Model,
@@ -58,9 +69,6 @@ export type Ctx = {
 	rng: Random,
 	difficulty: number,
 	distance: number,
-	height: number, -- this roof's height above the run origin
-	prevHeight: number, -- the previous roof's height (a ramp climbs from it)
-	flatFrom: number?, -- where the flat roof starts (after a ramp)
 }
 
 local OBSTACLE_TYPE: { [string]: string } = {
@@ -71,13 +79,14 @@ local OBSTACLE_TYPE: { [string]: string } = {
 	Crates = "Block",
 	WoodWall = "Block",
 	ConcreteWall = "Block",
-	Shed = "Block",
+	Bus = "Block",
+	TunnelEntrance = "Block",
 }
 
 -- ───────────────────────────── helpers ─────────────────────────────
 
 local function W(ctx: Ctx, x: number, y: number, d: number): Vector3
-	return ctx.origin + Vector3.new(x, ctx.height + y, -(ctx.startD + d))
+	return ctx.origin + Vector3.new(x, y, -(ctx.startD + d))
 end
 
 local function CF(ctx: Ctx, x: number, y: number, d: number): CFrame
@@ -104,109 +113,70 @@ local function solid(parent: Instance, props: Util.PartProps): BasePart
 	return p
 end
 
-local function obstacleModel(ctx: Ctx, kind: string, lane: number): Model
+-- Every obstacle knows its lane and where it starts along the track (the
+-- client uses TrackD to spot jumps, rolls and near misses for the combo).
+local function obstacleModel(ctx: Ctx, kind: string, lane: number, d: number): Model
 	local model = Instance.new("Model")
 	model.Name = kind
 	model:SetAttribute("ObstacleType", OBSTACLE_TYPE[kind])
 	model:SetAttribute("Kind", kind)
 	model:SetAttribute("Lane", lane)
+	model:SetAttribute("TrackD", ctx.startD + d)
 	model.Parent = ctx.folder
 	return model
 end
 
--- The roof of this segment's building, the building itself below it, a ramp
--- up from a lower previous roof, and (optionally) a gap at the end.
-local function roofFloor(ctx: Ctx, gapAtEnd: number?)
+-- The road: three lanes with dashed lines, curbs and sidewalks.
+local function streetFloor(ctx: Ctx)
 	local len = ctx.length
-	local rise = ctx.height - ctx.prevHeight
-	local slabStart = 0
-	if rise > 0.1 then
-		-- Full-width ramp climbing from the previous roof.
-		ground(ctx, {
-			Class = "WedgePart",
-			Name = "RoofRamp",
-			Size = Vector3.new(ROAD_WIDTH, rise, RAMP_LENGTH),
-			-- A WedgePart's high edge is at +Z; turn it to rise along the track.
-			CFrame = CF(ctx, 0, -rise / 2, RAMP_LENGTH / 2) * CFrame.Angles(0, math.pi, 0),
-			Color = THEME.Roof,
-			Material = Enum.Material.DiamondPlate,
-		})
-		slabStart = RAMP_LENGTH
-		ctx.flatFrom = RAMP_LENGTH
-	end
-	local slabEnd = len - (gapAtEnd or 0)
-	ground(ctx, {
-		Name = "Roof",
-		Size = Vector3.new(ROAD_WIDTH, 2, slabEnd - slabStart),
-		CFrame = CF(ctx, 0, -1, (slabStart + slabEnd) / 2),
-		Color = THEME.Roof,
-		Material = Enum.Material.Asphalt,
-	})
-	-- Painted lane guides so the three lanes stay readable up here.
+	ground(ctx, { Name = "Road", Size = Vector3.new(ROAD_WIDTH, 2, len), CFrame = CF(ctx, 0, -1, len / 2), Color = THEME.Road, Material = Enum.Material.Asphalt })
 	for _, x in { -4, 4 } do
-		scenery(ctx, { Name = "LaneGuide", Size = Vector3.new(0.35, 0.05, slabEnd - slabStart), CFrame = CF(ctx, x, 0.03, (slabStart + slabEnd) / 2), Color = THEME.RoofLine, CanCollide = false })
+		for d = 3, len - 3, 10 do
+			scenery(ctx, { Name = "LaneDash", Size = Vector3.new(0.4, 0.05, 5), CFrame = CF(ctx, x, 0.03, d), Color = THEME.LaneLine, CanCollide = false })
+		end
 	end
-	-- Low parapet walls along both edges.
 	for _, side in { -1, 1 } do
-		scenery(ctx, { Name = "Parapet", Size = Vector3.new(1.2, 1.6, slabEnd), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 + 0.6), 0.3, slabEnd / 2), Color = THEME.Parapet, Material = Enum.Material.Brick })
-	end
-	-- The building under the roof, all the way down to the street.
-	local depth = ctx.height - STREET_Y - 2
-	local color = THEME.Buildings[ctx.rng:NextInteger(1, #THEME.Buildings)]
-	local building = scenery(ctx, { Name = "Building", Size = Vector3.new(ROAD_WIDTH + 3, depth, slabEnd), CFrame = CF(ctx, 0, -2 - depth / 2, slabEnd / 2), Color = color, Material = Enum.Material.Brick })
-	for _, side in { -1, 1 } do
-		scenery(ctx, {
-			Parent = building,
-			Name = "Windows",
-			Size = Vector3.new(0.2, depth * 0.8, slabEnd * 0.85),
-			CFrame = building.CFrame * CFrame.new(side * ((ROAD_WIDTH + 3) / 2 + 0.1), -depth * 0.05, 0),
-			Color = Color3.fromRGB(255, 230, 170),
-			Material = Enum.Material.Neon,
-			Transparency = 0.55,
-			CanCollide = false,
-		})
-	end
-	if gapAtEnd and gapAtEnd > 0 then
-		-- Bright warning stripe on the edge before the drop.
-		scenery(ctx, { Name = "EdgeStripe", Size = Vector3.new(ROAD_WIDTH, 0.1, 1.2), CFrame = CF(ctx, 0, 0.05, slabEnd - 0.6), Color = Color3.fromRGB(255, 200, 0), Material = Enum.Material.Neon, CanCollide = false })
+		scenery(ctx, { Name = "Curb", Size = Vector3.new(0.8, 0.8, len), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 + 0.4), 0.4, len / 2), Color = THEME.Curb, Material = Enum.Material.Concrete })
+		scenery(ctx, { Name = "Sidewalk", Size = Vector3.new(SIDEWALK, 1, len), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 + 0.8 + SIDEWALK / 2), 0.1, len / 2), Color = THEME.Sidewalk, Material = Enum.Material.Concrete })
 	end
 end
 
--- The city around you: neighbouring rooftops, billboards and the street far below.
-local function skyline(ctx: Ctx)
+-- Shops and apartment blocks along both sides, lamp posts on the sidewalk.
+local function cityScenery(ctx: Ctx)
 	local rng = ctx.rng
-	scenery(ctx, { Name = "Street", Size = Vector3.new(400, 2, ctx.length), CFrame = CF(ctx, 0, STREET_Y - ctx.height, ctx.length / 2), Color = Color3.fromRGB(60, 60, 68), Material = Enum.Material.Asphalt })
+	local edge = ROAD_WIDTH / 2 + 0.8 + SIDEWALK
 	for _, side in { -1, 1 } do
+		for d = 20, ctx.length, 40 do
+			local x = side * (ROAD_WIDTH / 2 + 2)
+			local pole = scenery(ctx, { Name = "LampPole", Size = Vector3.new(0.6, 13, 0.6), CFrame = CF(ctx, x, 6.5, d), Color = Color3.fromRGB(45, 45, 55) })
+			scenery(ctx, { Parent = pole, Name = "Lamp", Size = Vector3.new(2.6, 0.5, 1.2), CFrame = CF(ctx, x - side * 1, 13, d), Color = Color3.fromRGB(255, 230, 160), Material = Enum.Material.Neon, CanCollide = false })
+		end
 		local d = 0
 		while d < ctx.length do
-			local depth = rng:NextNumber(30, 50)
-			local width = rng:NextNumber(26, 44)
-			local top = rng:NextNumber(-25, 35) -- relative to this roof
-			local height = top - (STREET_Y - ctx.height)
-			local x = side * (ROAD_WIDTH / 2 + 22 + width / 2 + rng:NextNumber(0, 20))
-			local b = scenery(ctx, {
-				Name = "Neighbour",
-				Size = Vector3.new(width, height, math.min(depth, ctx.length - d)),
-				CFrame = CF(ctx, x, top - height / 2, d + depth / 2),
+			local depth = math.min(rng:NextNumber(22, 40), ctx.length - d)
+			local height = rng:NextNumber(24, 60)
+			local width = rng:NextNumber(24, 36)
+			local x = side * (edge + width / 2)
+			local building = scenery(ctx, {
+				Name = "Building",
+				Size = Vector3.new(width, height, depth),
+				CFrame = CF(ctx, x, height / 2, d + depth / 2),
 				Color = THEME.Buildings[rng:NextInteger(1, #THEME.Buildings)],
 				Material = Enum.Material.Brick,
 			})
-			if rng:NextNumber() < 0.35 then
-				-- Neon billboard on the neighbour's roof
-				local board = scenery(ctx, { Parent = b, Name = "Billboard", Size = Vector3.new(width * 0.8, 8, 0.6), CFrame = CF(ctx, x, top + 6, d + depth / 2) * CFrame.Angles(0, math.rad(side * 70), 0), Color = Color3.fromRGB(25, 20, 35) })
+			local face = side * -(width / 2 + 0.1)
+			-- Shop front with a Brainrot shop sign
+			local shopColor = THEME.Neon[rng:NextInteger(1, #THEME.Neon)]
+			scenery(ctx, { Parent = building, Name = "ShopWindow", Size = Vector3.new(0.2, 6, depth * 0.7), CFrame = building.CFrame * CFrame.new(face, -height / 2 + 4, 0), Color = Color3.fromRGB(170, 220, 255), Material = Enum.Material.Glass, Transparency = 0.3, CanCollide = false })
+			local sign = scenery(ctx, { Parent = building, Name = "ShopSign", Size = Vector3.new(0.4, 2.4, depth * 0.8), CFrame = building.CFrame * CFrame.new(face, -height / 2 + 8.6, 0), Color = Color3.fromRGB(25, 20, 35), CanCollide = false })
+			Util.SurfaceLabel(sign, if side < 0 then Enum.NormalId.Right else Enum.NormalId.Left, SHOP_SIGNS[rng:NextInteger(1, #SHOP_SIGNS)], { PixelsPerStud = 10, TextColor = shopColor })
+			-- Lit apartment windows above
+			scenery(ctx, { Parent = building, Name = "Windows", Size = Vector3.new(0.2, height - 16, depth * 0.8), CFrame = building.CFrame * CFrame.new(face, 5, 0), Color = Color3.fromRGB(255, 230, 170), Material = Enum.Material.Neon, Transparency = 0.6, CanCollide = false })
+			if rng:NextNumber() < 0.25 then
+				local board = scenery(ctx, { Parent = building, Name = "Billboard", Size = Vector3.new(width * 0.8, 8, 0.6), CFrame = CF(ctx, x, height + 5, d + depth / 2) * CFrame.Angles(0, math.rad(side * 70), 0), Color = Color3.fromRGB(25, 20, 35) })
 				Util.SurfaceLabel(board, Enum.NormalId.Front, BILLBOARDS[rng:NextInteger(1, #BILLBOARDS)], { PixelsPerStud = 8, TextColor = THEME.Neon[rng:NextInteger(1, #THEME.Neon)] })
-				for _, px in { -0.3, 0.3 } do
-					scenery(ctx, { Parent = b, Name = "BillboardLeg", Size = Vector3.new(0.6, 3, 0.6), CFrame = CF(ctx, x + px * width * 0.5, top + 1.5, d + depth / 2), Color = Color3.fromRGB(50, 50, 60) })
-				end
-			elseif rng:NextNumber() < 0.4 then
-				-- Water tower
-				local tower = CF(ctx, x, top, d + depth / 2)
-				for _, o in { Vector3.new(-2, 0, -2), Vector3.new(2, 0, -2), Vector3.new(-2, 0, 2), Vector3.new(2, 0, 2) } do
-					scenery(ctx, { Parent = b, Name = "TowerLeg", Size = Vector3.new(0.5, 6, 0.5), CFrame = tower * CFrame.new(o + Vector3.new(0, 3, 0)), Color = Color3.fromRGB(70, 60, 50) })
-				end
-				Util.UprightCylinder({ Parent = b, CFrame = tower * CFrame.new(0, 9, 0), Height = 6, Diameter = 6, Color = Color3.fromRGB(140, 100, 70), Material = Enum.Material.WoodPlanks, CanQuery = false })
 			end
-			d += depth + rng:NextNumber(4, 12)
+			d += depth + rng:NextNumber(2, 6)
 		end
 	end
 end
@@ -265,8 +235,8 @@ local function pickupBox(ctx: Ctx, lane: number, d: number, kind: string, color:
 	return box
 end
 
-local function powerUp(ctx: Ctx, lane: number, d: number, y: number?)
-	local p = PowerUpData.Pick(ctx.rng)
+local function powerUp(ctx: Ctx, lane: number, d: number, y: number?, id: string?)
+	local p = (if id then PowerUpData.Get(id) else nil) or PowerUpData.Pick(ctx.rng)
 	local box = pickupBox(ctx, lane, d, "PowerUp", p.color, p.icon, y)
 	box:SetAttribute("PowerUpId", p.id)
 end
@@ -280,7 +250,7 @@ end
 local builders: { [string]: (ctx: Ctx, lane: number, d: number) -> Model } = {}
 
 builders.Barricade = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "Barricade", lane)
+	local m = obstacleModel(ctx, "Barricade", lane, d)
 	local x = LANES[lane]
 	for _, side in { -1, 1 } do
 		solid(m, { Name = "Leg", Size = Vector3.new(0.5, 3, 0.5), CFrame = CF(ctx, x + side * 3, 1.5, d), Color = Color3.fromRGB(120, 80, 40), Material = Enum.Material.Wood })
@@ -298,55 +268,66 @@ builders.Barricade = function(ctx, lane, d)
 	return m
 end
 
+-- Concrete road barrier with warning stripes (unbreakable: jump it).
 builders.SteelBarrier = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "SteelBarrier", lane)
+	local m = obstacleModel(ctx, "SteelBarrier", lane, d)
 	local x = LANES[lane]
-	solid(m, { Name = "Barrier", Size = Vector3.new(7, 3, 1), CFrame = CF(ctx, x, 1.5, d), Color = Color3.fromRGB(150, 155, 165), Material = Enum.Material.DiamondPlate })
+	solid(m, { Name = "Barrier", Size = Vector3.new(7, 3, 1.2), CFrame = CF(ctx, x, 1.5, d), Color = Color3.fromRGB(200, 200, 205), Material = Enum.Material.Concrete })
 	for i = -1, 1 do
-		scenery(ctx, { Parent = m, Name = "Stripe", Size = Vector3.new(1.2, 3.02, 1.02), CFrame = CF(ctx, x + i * 2.4, 1.5, d), Color = Color3.fromRGB(255, 210, 0), Material = Enum.Material.SmoothPlastic, CanCollide = false })
+		scenery(ctx, { Parent = m, Name = "Stripe", Size = Vector3.new(1.2, 3.02, 1.22), CFrame = CF(ctx, x + i * 2.4, 1.5, d), Color = Color3.fromRGB(255, 120, 0), Material = Enum.Material.SmoothPlastic, CanCollide = false })
 	end
 	Destruction.Setup(m, 4)
 	return m
 end
 
 builders.OverheadSign = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "OverheadSign", lane)
+	local m = obstacleModel(ctx, "OverheadSign", lane, d)
 	local x = LANES[lane]
 	for _, side in { -1, 1 } do
 		solid(m, { Name = "Post", Size = Vector3.new(0.4, 10.5, 0.4), CFrame = CF(ctx, x + side * 3.7, 5.25, d), Color = Color3.fromRGB(80, 80, 90), Material = Enum.Material.Metal })
 	end
-	local board = solid(m, { Name = "Board", Size = Vector3.new(7, 7, 0.4), CFrame = CF(ctx, x, 3.4 + 3.5, d), Color = ({ Color3.fromRGB(255, 90, 160), Color3.fromRGB(40, 140, 255), Color3.fromRGB(255, 170, 40) })[ctx.rng:NextInteger(1, 3)] })
-	local texts = { "VERITY\nWAS HERE", "⬇️ ROLL ⬇️", "TRALALERO\nTRALALA", "DUCK!", "BOMBARDIRO\nAIRLINES" }
+	local board = solid(m, { Name = "Board", Size = Vector3.new(7, 7, 0.4), CFrame = CF(ctx, x, 3.4 + 3.5, d), Color = ({ Color3.fromRGB(255, 90, 160), Color3.fromRGB(40, 140, 255), Color3.fromRGB(40, 160, 90) })[ctx.rng:NextInteger(1, 3)] })
+	local texts = { "VERITY\nWAS HERE", "⬇️ ROLL ⬇️", "TRALALERO\nAVENUE", "DUCK!", "BRAINROT\nCITY" }
 	Util.SurfaceLabel(board, Enum.NormalId.Back, texts[ctx.rng:NextInteger(1, #texts)], { PixelsPerStud = 20 })
 	Destruction.Setup(m, 1, "Shatter", "Metal")
 	return m
 end
 
+-- A scaffolding beam across the lane (unbreakable: roll under it).
 builders.OverheadPipe = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "OverheadPipe", lane)
+	local m = obstacleModel(ctx, "OverheadPipe", lane, d)
 	local x = LANES[lane]
 	for _, side in { -1, 1 } do
 		solid(m, { Name = "Support", Size = Vector3.new(0.6, 10.5, 0.6), CFrame = CF(ctx, x + side * 3.7, 5.25, d), Color = Color3.fromRGB(90, 90, 100), Material = Enum.Material.Metal })
 	end
-	solid(m, { Name = "Pipe", Size = Vector3.new(7, 7, 1.4), CFrame = CF(ctx, x, 3.4 + 3.5, d), Color = Color3.fromRGB(200, 90, 40), Material = Enum.Material.CorrodedMetal })
+	solid(m, { Name = "Beam", Size = Vector3.new(7, 7, 1.4), CFrame = CF(ctx, x, 3.4 + 3.5, d), Color = Color3.fromRGB(255, 170, 30), Material = Enum.Material.Metal })
 	Destruction.Setup(m, 4)
 	return m
 end
 
--- Rooftop AC units: smash straight through them (or hop on top).
+-- Market crates: smash straight through them.
 builders.Crates = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "Crates", lane)
+	local m = obstacleModel(ctx, "Crates", lane, d)
 	local x = LANES[lane]
-	for _, j in { -1, 1 } do
-		local unit = solid(m, { Name = "ACUnit", Size = Vector3.new(3.2, 4, 3.2), CFrame = CF(ctx, x + j * 1.7, 2, d), Color = Color3.fromRGB(205, 210, 215), Material = Enum.Material.Metal })
-		scenery(ctx, { Parent = m, Name = "Fan", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 2.4, 2.4), CFrame = unit.CFrame * CFrame.new(0, 2.05, 0) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(60, 60, 70), CanCollide = false })
+	for i = 0, 2 do
+		for j = -1, 1, 2 do
+			if i < 2 or j == 1 then
+				solid(m, {
+					Name = "Box",
+					Size = Vector3.new(3, 3, 3),
+					CFrame = CF(ctx, x + j * 1.6, 1.5 + i * 3, d) * CFrame.Angles(0, math.rad(ctx.rng:NextNumber(-10, 10)), 0),
+					Color = Color3.fromRGB(190, 140, 80),
+					Material = Enum.Material.WoodPlanks,
+				})
+			end
+		end
 	end
-	Destruction.Setup(m, 1, "Shatter", "Metal")
+	Destruction.Setup(m, 1, "Shatter", "Wood")
 	return m
 end
 
 local function wall(ctx: Ctx, lane: number, d: number, kind: string, tier: number, color: Color3, material: Enum.Material, thickness: number): Model
-	local m = obstacleModel(ctx, kind, lane)
+	local m = obstacleModel(ctx, kind, lane, d)
 	local brickWall = Destruction.BrickWall(m, CF(ctx, LANES[lane], 6, d), Vector3.new(7.6, 12, thickness), Vector3.new(1.9, 2, thickness), color, material)
 	for _, p in brickWall:GetChildren() do
 		(p :: BasePart).CollisionGroup = "RunObstacle"
@@ -360,47 +341,45 @@ builders.WoodWall = function(ctx, lane, d)
 end
 
 builders.ConcreteWall = function(ctx, lane, d)
-	local m = wall(ctx, lane, d, "ConcreteWall", 3, Color3.fromRGB(175, 175, 180), Enum.Material.Concrete, 2)
-	return m
+	return wall(ctx, lane, d, "ConcreteWall", 3, Color3.fromRGB(175, 175, 180), Enum.Material.Concrete, 2)
 end
 
--- A long rooftop shed / air duct. Its roof is walkable (take the ramp up).
-builders.Shed = function(ctx, lane, d)
-	local m = obstacleModel(ctx, "Shed", lane)
+-- A city bus. Too tall to jump normally: go round it, or boost-jump onto the
+-- roof (👟 / 🛹) and run along the top.
+builders.Bus = function(ctx, lane, d)
+	local m = obstacleModel(ctx, "Bus", lane, d)
 	local x = LANES[lane]
-	local len = 40
-	local colors = { Color3.fromRGB(150, 155, 165), Color3.fromRGB(110, 140, 170), Color3.fromRGB(170, 120, 100) }
-	solid(m, { Name = "Body", Size = Vector3.new(7, 9.8, len), CFrame = CF(ctx, x, 4.9, d + len / 2), Color = colors[ctx.rng:NextInteger(1, #colors)], Material = Enum.Material.Metal })
-	ground(ctx, { Parent = m, Name = "Roof", Size = Vector3.new(7, 0.4, len), CFrame = CF(ctx, x, 10, d + len / 2), Color = Color3.fromRGB(90, 90, 100), Material = Enum.Material.DiamondPlate })
-	local front = scenery(ctx, { Parent = m, Name = "Front", Size = Vector3.new(6, 3, 0.2), CFrame = CF(ctx, x, 6.5, d - 0.1), Color = Color3.fromRGB(30, 30, 40), CanCollide = false })
-	Util.SurfaceLabel(front, Enum.NormalId.Back, "🧠 BRAINROT AIR", { PixelsPerStud = 15, TextColor = Color3.fromRGB(120, 220, 255) })
+	local color = THEME.Bus[ctx.rng:NextInteger(1, #THEME.Bus)]
+	solid(m, { Name = "Body", Size = Vector3.new(7, BUS_HEIGHT - 1, BUS_LENGTH), CFrame = CF(ctx, x, 1 + (BUS_HEIGHT - 1) / 2, d + BUS_LENGTH / 2), Color = color, Material = Enum.Material.SmoothPlastic })
+	ground(ctx, { Parent = m, Name = "BusRoof", Size = Vector3.new(7, 0.5, BUS_LENGTH), CFrame = CF(ctx, x, BUS_HEIGHT + 0.25, d + BUS_LENGTH / 2), Color = Color3.fromRGB(235, 235, 240), Material = Enum.Material.SmoothPlastic })
+	for _, side in { -1, 1 } do
+		scenery(ctx, { Parent = m, Name = "Windows", Size = Vector3.new(0.2, 3.2, BUS_LENGTH - 6), CFrame = CF(ctx, x + side * 3.55, 7.6, d + BUS_LENGTH / 2 + 1), Color = Color3.fromRGB(60, 80, 110), Material = Enum.Material.Glass, CanCollide = false })
+		for _, wd in { 6, BUS_LENGTH - 7 } do
+			scenery(ctx, { Parent = m, Name = "Wheel", Shape = Enum.PartType.Cylinder, Size = Vector3.new(1, 3, 3), CFrame = CF(ctx, x + side * 3.3, 1.5, d + wd), Color = Color3.fromRGB(25, 25, 30), CanCollide = false })
+		end
+	end
+	scenery(ctx, { Parent = m, Name = "Front", Size = Vector3.new(6.4, 4, 0.2), CFrame = CF(ctx, x, 7.6, d - 0.1), Color = Color3.fromRGB(60, 80, 110), Material = Enum.Material.Glass, CanCollide = false })
+	local destination = scenery(ctx, { Parent = m, Name = "Destination", Size = Vector3.new(6.4, 1.4, 0.2), CFrame = CF(ctx, x, 10.6, d - 0.1), Color = Color3.fromRGB(20, 20, 25), CanCollide = false })
+	Util.SurfaceLabel(destination, Enum.NormalId.Back, ("🧠 %s EXPRESS"):format(string.upper(Config.Villain.Name)), { PixelsPerStud = 15, TextColor = Color3.fromRGB(255, 180, 40) })
 	Destruction.Setup(m, 4)
 	return m
 end
 
-local function ramp(ctx: Ctx, lane: number, d: number, length: number)
-	return ground(ctx, {
-		Class = "WedgePart",
-		Name = "Ramp",
-		Size = Vector3.new(7, 10, length),
-		-- A WedgePart's slope faces -Z (high edge at +Z). The track runs toward
-		-- -Z, so turn it around to rise toward the shed.
-		CFrame = CF(ctx, LANES[lane], 5, d + length / 2) * CFrame.Angles(0, math.pi, 0),
-		Color = Color3.fromRGB(120, 120, 130),
-		Material = Enum.Material.DiamondPlate,
-	})
-end
-
--- Every obstacle gets an invisible standable top, so you can land on (and run
--- across) anything you can reach: AC units, walls, barriers, billboards.
-local function addStandTop(model: Model)
+-- Invisible standable top on tall obstacles (walls, signs), so with a jump
+-- boost you can land on those too. Low things don't get one: you jump over
+-- them, you don't stand on them.
+local function addStandTop(model: Model, baseY: number)
 	local ok, cf, size = pcall(function()
 		return model:GetBoundingBox()
 	end)
 	if not ok then
 		return
 	end
-	local top = Util.Part({
+	local top = cf.Position.Y + size.Y / 2 - baseY
+	if top <= Config.Run.HighGround + 0.5 then
+		return
+	end
+	local slab = Util.Part({
 		Name = "StandTop",
 		Parent = model,
 		Size = Vector3.new(size.X, 0.3, size.Z),
@@ -410,13 +389,15 @@ local function addStandTop(model: Model)
 		CanQuery = true,
 		CastShadow = false,
 	})
-	top.CollisionGroup = "RunGround"
+	slab.CollisionGroup = "RunGround"
 end
+
+local HAS_OWN_ROOF = { Bus = true }
 
 function Segments.Obstacle(ctx: Ctx, kind: string, lane: number, d: number): Model
 	local model = builders[kind](ctx, lane, d)
-	if kind ~= "Shed" then
-		addStandTop(model)
+	if not HAS_OWN_ROOF[kind] then
+		addStandTop(model, ctx.origin.Y)
 	end
 	return model
 end
@@ -456,7 +437,7 @@ local function obstacleRows(ctx: Ctx, d0: number, d1: number, kinds: { [string]:
 		return
 	end
 	local spacing = Util.Lerp(55, 32, ctx.difficulty)
-	local d = math.max(d0, (ctx.flatFrom or 0) + 4)
+	local d = d0
 	while d <= d1 do
 		local freeChance = Util.Lerp(0.6, 0.3, ctx.difficulty)
 		local row: { [number]: string? } = {}
@@ -499,15 +480,20 @@ end
 local EDGE = Config.Run.SafeZoneAtSegmentEdges
 
 -- Power-ups and mystery boxes sit in the calm stretch at the start of a
--- segment (after any ramp) so they never overlap an obstacle.
+-- segment so they never overlap an obstacle.
 local function maybePickups(ctx: Ctx)
 	local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
-	local d = (ctx.flatFrom or 0) + EDGE * 0.5
 	if ctx.rng:NextNumber() < Config.PowerUps.SpawnChancePerSegment then
-		powerUp(ctx, lane, d)
+		powerUp(ctx, lane, EDGE * 0.5)
 	elseif ctx.rng:NextNumber() < 0.15 then
-		mysteryBox(ctx, lane, d)
+		mysteryBox(ctx, lane, EDGE * 0.5)
 	end
+end
+
+local function sideSign(ctx: Ctx, d: number, text: string, color: Color3)
+	local sign = scenery(ctx, { Name = "Sign", Size = Vector3.new(12, 3, 0.4), CFrame = CF(ctx, -ROAD_WIDTH / 2 - 3, 7, d), Color = color, Material = Enum.Material.Neon })
+	Util.SurfaceLabel(sign, Enum.NormalId.Back, text, { PixelsPerStud = 14, TextColor = Color3.fromRGB(20, 15, 10) })
+	scenery(ctx, { Name = "SignPost", Size = Vector3.new(0.5, 6, 0.5), CFrame = CF(ctx, -ROAD_WIDTH / 2 - 3, 3, d), Color = Color3.fromRGB(60, 60, 70) })
 end
 
 -- ───────────────────────────── segment types ─────────────────────────────
@@ -517,7 +503,6 @@ export type SegmentDef = {
 	weight: number,
 	minDistance: number,
 	cooldown: number, -- segments that must pass before this can repeat
-	gap: number?, -- this segment ends in a gap of this many studs
 	build: (ctx: Ctx) -> (),
 }
 
@@ -527,107 +512,153 @@ local function define(def: SegmentDef)
 	table.insert(defs, def)
 end
 
--- A plain roof: parapets to jump, billboards to roll under, AC units.
+-- The bread and butter: barriers to jump, signs to roll under, crates to smash.
 define({
-	name = "Rooftop",
+	name = "Street",
 	weight = 10,
 	minDistance = 0,
 	cooldown = 0,
 	build = function(ctx)
-		roofFloor(ctx)
-		skyline(ctx)
+		streetFloor(ctx)
+		cityScenery(ctx)
 		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { Barricade = 4, OverheadSign = 3, Crates = 2, SteelBarrier = 1 })
 		maybePickups(ctx)
 	end,
 })
 
--- The roof ends — leap the gap to the next building! Coins show the arc,
--- and sometimes a plank bridges one lane.
-local LEAP_GAP = 10
+-- Buses: switch lanes round them — or boost-jump onto the roof, where a coin
+-- line runs along the top.
 define({
-	name = "Leap",
-	weight = 6,
-	minDistance = 150,
-	cooldown = 1,
-	gap = LEAP_GAP,
-	build = function(ctx)
-		roofFloor(ctx, LEAP_GAP)
-		skyline(ctx)
-		local edge = ctx.length - LEAP_GAP
-		obstacleRows(ctx, EDGE + 12, edge - 30, { Barricade = 3, OverheadSign = 2, Crates = 2 })
-		local arcLane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
-		coinArc(ctx, arcLane, edge + LEAP_GAP / 2)
-		if ctx.rng:NextNumber() < 0.35 then
-			local plankLane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
-			ground(ctx, { Name = "Plank", Size = Vector3.new(3.4, 0.6, LEAP_GAP + 2), CFrame = CF(ctx, LANES[plankLane], -0.3, edge + LEAP_GAP / 2), Color = Color3.fromRGB(150, 105, 60), Material = Enum.Material.WoodPlanks })
-		end
-		local sign = scenery(ctx, { Name = "JumpSign", Size = Vector3.new(10, 3, 0.4), CFrame = CF(ctx, -ROAD_WIDTH / 2 - 4, 6, edge - 14), Color = Color3.fromRGB(255, 200, 0) })
-		Util.SurfaceLabel(sign, Enum.NormalId.Back, "⚠️ JUMP!", { PixelsPerStud = 15, TextColor = Color3.fromRGB(30, 20, 0) })
-		maybePickups(ctx)
-	end,
-})
-
--- Rooftop sheds: switch lanes around them, or take the ramp and run on top.
-define({
-	name = "Sheds",
-	weight = 7,
+	name = "Buses",
+	weight = 8,
 	minDistance = 60,
 	cooldown = 1,
 	build = function(ctx)
-		roofFloor(ctx)
-		skyline(ctx)
-		local start = (ctx.flatFrom or 0) + EDGE
-		local rampLane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
-		ramp(ctx, rampLane, start, 26)
-		Segments.Obstacle(ctx, "Shed", rampLane, start + 26)
-		Segments.Obstacle(ctx, "Shed", rampLane, start + 68)
-		coinLine(ctx, rampLane, start + 28, math.min(start + 104, ctx.length - 4), 10.2)
-		local skip = { [rampLane] = true }
+		streetFloor(ctx)
+		cityScenery(ctx)
+		local rng = ctx.rng
+		local start = EDGE + 24
+		local roofLane = LANE_IDS[rng:NextInteger(1, 3)]
+		Segments.Obstacle(ctx, "Bus", roofLane, start)
+		local convoy = rng:NextNumber() < 0.5
+		if convoy then
+			-- A second bus right behind: jump across the roofs.
+			Segments.Obstacle(ctx, "Bus", roofLane, start + BUS_LENGTH + 6)
+		end
+		local roofEnd = start + (if convoy then BUS_LENGTH * 2 + 6 else BUS_LENGTH) - 4
+		coinLine(ctx, roofLane, start + 4, roofEnd, BUS_HEIGHT + 0.5)
+		if rng:NextNumber() < 0.3 then
+			mysteryBox(ctx, roofLane, roofEnd - 6, BUS_HEIGHT + 0.5)
+		end
+		local skip = { [roofLane] = true }
+		local extraBus = false
 		for _, lane in LANE_IDS do
-			if lane ~= rampLane and ctx.rng:NextNumber() < 0.55 then
-				Segments.Obstacle(ctx, "Shed", lane, start + ctx.rng:NextNumber(20, 45))
+			-- One more bus at most, so there's always a lane on the road.
+			if lane ~= roofLane and not extraBus and rng:NextNumber() < 0.4 then
+				Segments.Obstacle(ctx, "Bus", lane, start + rng:NextNumber(0, 30))
 				skip[lane] = true
+				extraBus = true
 			end
 		end
-		obstacleRows(ctx, start + 25, ctx.length - EDGE, { Barricade = 2, OverheadSign = 2 }, skip)
-		maybePickups(ctx)
+		obstacleRows(ctx, start + 12, ctx.length - EDGE, { Barricade = 2, OverheadSign = 2 }, skip)
+		-- Sometimes the boost is right there before the buses.
+		if rng:NextNumber() < 0.35 then
+			powerUp(ctx, roofLane, EDGE * 0.5, nil, "SuperSneakers")
+		else
+			maybePickups(ctx)
+		end
 	end,
 })
 
--- Straight through a glass penthouse: pipes to roll under, vents to jump.
+-- An underpass. Run through it — or boost-jump onto the roof before the
+-- entrance and run across the top (coins and sometimes a mystery box).
+local TUNNEL_START = 40
+local TUNNEL_LENGTH = 66
 define({
-	name = "Penthouse",
+	name = "Tunnel",
+	weight = 5,
+	minDistance = 200,
+	cooldown = 2,
+	build = function(ctx)
+		streetFloor(ctx)
+		cityScenery(ctx)
+		local rng = ctx.rng
+		local d0, d1 = TUNNEL_START, TUNNEL_START + TUNNEL_LENGTH
+		local mid = (d0 + d1) / 2
+		local width = ROAD_WIDTH + 4
+		-- Walls (outside the lanes), the roof you can run on, and its underside.
+		for _, side in { -1, 1 } do
+			scenery(ctx, { Name = "TunnelWall", Size = Vector3.new(4, TUNNEL_ROOF + 4, TUNNEL_LENGTH), CFrame = CF(ctx, side * (width / 2 + 2), (TUNNEL_ROOF + 4) / 2, mid), Color = Color3.fromRGB(120, 110, 105), Material = Enum.Material.Brick })
+			for d = d0 + 8, d1 - 8, 14 do
+				scenery(ctx, { Name = "TunnelLight", Size = Vector3.new(0.3, 0.8, 6), CFrame = CF(ctx, side * (width / 2 - 0.2), 10, d), Color = Color3.fromRGB(255, 200, 120), Material = Enum.Material.Neon, CanCollide = false })
+			end
+		end
+		ground(ctx, { Name = "TunnelRoof", Size = Vector3.new(width + 8, TUNNEL_ROOF - TUNNEL_CEILING, TUNNEL_LENGTH), CFrame = CF(ctx, 0, (TUNNEL_CEILING + TUNNEL_ROOF) / 2, mid), Color = Color3.fromRGB(140, 130, 120), Material = Enum.Material.Concrete })
+		-- Railings along the top edges (scenery: purely for looks)
+		for _, side in { -1, 1 } do
+			scenery(ctx, { Name = "RoofRail", Size = Vector3.new(0.4, 2, TUNNEL_LENGTH), CFrame = CF(ctx, side * (width / 2 + 3.5), TUNNEL_ROOF + 1, mid), Color = Color3.fromRGB(80, 80, 90), Material = Enum.Material.Metal })
+		end
+		-- The entrance lip: crash into it if you jump at it without enough height.
+		for _, lane in LANE_IDS do
+			local lip = obstacleModel(ctx, "TunnelEntrance", lane, d0)
+			lip:SetAttribute("NoStyle", true)
+			solid(lip, { Name = "Lip", Size = Vector3.new(8, TUNNEL_ROOF - TUNNEL_CEILING, 1), CFrame = CF(ctx, LANES[lane], (TUNNEL_CEILING + TUNNEL_ROOF) / 2, d0 + 0.5), Color = Color3.fromRGB(140, 130, 120), Material = Enum.Material.Concrete, Transparency = 1 })
+			Destruction.Setup(lip, 4)
+		end
+		-- Name sign high above the entrance (you run under it on the roof).
+		local facade = scenery(ctx, { Name = "TunnelSign", Size = Vector3.new(width, 3.5, 0.6), CFrame = CF(ctx, 0, TUNNEL_ROOF + 8, d0), Color = Color3.fromRGB(60, 55, 70) })
+		Util.SurfaceLabel(facade, Enum.NormalId.Back, "🚇 BRAINROT UNDERPASS", { PixelsPerStud = 12, TextColor = Color3.fromRGB(255, 200, 90) })
+		for _, side in { -1, 1 } do
+			scenery(ctx, { Name = "TunnelSignPost", Size = Vector3.new(0.8, 10, 0.8), CFrame = CF(ctx, side * (width / 2 + 2), TUNNEL_ROOF + 5, d0), Color = Color3.fromRGB(60, 55, 70) })
+		end
+		sideSign(ctx, d0 - 26, "👟🛹 BOOST ONTO THE ROOF!", Color3.fromRGB(255, 200, 0))
+
+		-- On the roof: a long coin line (and maybe a mystery box).
+		local roofLane = LANE_IDS[rng:NextInteger(1, 3)]
+		coinLine(ctx, roofLane, d0 + 4, d1 - 4, TUNNEL_ROOF)
+		if rng:NextNumber() < 0.4 then
+			mysteryBox(ctx, LANE_IDS[rng:NextInteger(1, 3)], d1 - 12, TUNNEL_ROOF)
+		end
+		-- Inside: low obstacles only.
+		obstacleRows(ctx, d0 + 10, d1 - 6, { Barricade = 3, SteelBarrier = 2, Crates = 2 })
+		obstacleRows(ctx, d1 + 14, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
+		if rng:NextNumber() < 0.35 then
+			powerUp(ctx, LANE_IDS[rng:NextInteger(1, 3)], EDGE * 0.5, nil, "SuperSneakers")
+		else
+			maybePickups(ctx)
+		end
+	end,
+})
+
+-- Road works: scaffolding beams to roll under, barriers to jump.
+define({
+	name = "RoadWorks",
 	weight = 4,
 	minDistance = 250,
 	cooldown = 2,
 	build = function(ctx)
-		roofFloor(ctx)
-		skyline(ctx)
-		local from = ctx.flatFrom or 0
-		local len = ctx.length - from
+		streetFloor(ctx)
+		cityScenery(ctx)
 		for _, side in { -1, 1 } do
-			scenery(ctx, { Name = "GlassWall", Size = Vector3.new(1, 16, len), CFrame = CF(ctx, side * 15.5, 8, from + len / 2), Color = Color3.fromRGB(170, 220, 255), Material = Enum.Material.Glass, Transparency = 0.5 })
-			for d = from + 10, ctx.length - 10, 22 do
-				scenery(ctx, { Name = "Lamp", Size = Vector3.new(0.3, 1, 5), CFrame = CF(ctx, side * 14.8, 12, d), Color = Color3.fromRGB(255, 230, 160), Material = Enum.Material.Neon, CanCollide = false })
+			for d = 10, ctx.length - 10, 20 do
+				scenery(ctx, { Name = "Cone", Size = Vector3.new(1, 1.6, 1), CFrame = CF(ctx, side * (ROAD_WIDTH / 2 - 0.8), 0.8, d), Color = Color3.fromRGB(255, 120, 0) })
 			end
 		end
-		scenery(ctx, { Name = "GlassRoof", Size = Vector3.new(32, 1, len), CFrame = CF(ctx, 0, 16.5, from + len / 2), Color = Color3.fromRGB(170, 220, 255), Material = Enum.Material.Glass, Transparency = 0.6 })
-		local sign = scenery(ctx, { Name = "PenthouseSign", Size = Vector3.new(24, 3.5, 0.5), CFrame = CF(ctx, 0, 14, from + 2), Color = Color3.fromRGB(25, 20, 35) })
-		Util.SurfaceLabel(sign, Enum.NormalId.Back, "✨ BRAINROT PENTHOUSE ✨", { PixelsPerStud = 14, TextColor = Color3.fromRGB(255, 200, 90) })
+		sideSign(ctx, 8, "🚧 ROAD WORKS", Color3.fromRGB(255, 140, 0))
 		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { SteelBarrier = 3, OverheadPipe = 3, Crates = 1 })
 		maybePickups(ctx)
 	end,
 })
 
--- Smash zone: wooden walls to crash through at speed (or hop over with sneakers).
+-- Smash zone: wooden walls to crash through at speed (or hop over with a boost).
 define({
 	name = "Smash",
 	weight = 4,
 	minDistance = 400,
 	cooldown = 2,
 	build = function(ctx)
-		roofFloor(ctx)
-		skyline(ctx)
+		streetFloor(ctx)
+		cityScenery(ctx)
 		obstacleRows(ctx, EDGE + 12, ctx.length - EDGE, { WoodWall = 4, Crates = 2, Barricade = 2, ConcreteWall = 1 })
 		maybePickups(ctx)
 	end,
@@ -640,9 +671,9 @@ define({
 	minDistance = 300,
 	cooldown = 4,
 	build = function(ctx)
-		roofFloor(ctx)
-		skyline(ctx)
-		local vaultStart = math.max(EDGE + 20, (ctx.flatFrom or 0) + 8)
+		streetFloor(ctx)
+		cityScenery(ctx)
+		local vaultStart = EDGE + 20
 		local vaultEnd = ctx.length - EDGE - 6
 		local entrance = Segments.Obstacle(ctx, if ctx.rng:NextNumber() < 0.6 then "WoodWall" else "ConcreteWall", 0, vaultStart)
 		entrance:SetAttribute("Vault", true)
@@ -650,9 +681,10 @@ define({
 		Util.SurfaceLabel(sign, Enum.NormalId.Back, "💥 BONUS 💥", { PixelsPerStud = 20 })
 		for _, side in { -1, 1 } do
 			-- Lane 99: never "in front" of the runner, so touching it is always a side bump.
-			local divider = obstacleModel(ctx, "VaultDivider", 99)
+			local divider = obstacleModel(ctx, "VaultDivider", 99, vaultStart)
 			divider:SetAttribute("ObstacleType", "Block")
-			solid(divider, { Name = "Divider", Size = Vector3.new(0.8, 12, vaultEnd - vaultStart), CFrame = CF(ctx, side * 4, 6, (vaultStart + vaultEnd) / 2), Color = THEME.Parapet, Material = Enum.Material.Brick })
+			divider:SetAttribute("NoStyle", true)
+			solid(divider, { Name = "Divider", Size = Vector3.new(0.8, 12, vaultEnd - vaultStart), CFrame = CF(ctx, side * 4, 6, (vaultStart + vaultEnd) / 2), Color = THEME.Curb, Material = Enum.Material.Brick })
 			Destruction.Setup(divider, 4)
 		end
 		coinLine(ctx, 0, vaultStart + 6, vaultEnd - 6)
@@ -662,7 +694,7 @@ define({
 	end,
 })
 
--- A caged Brainrot on the roof: run through the cage to rescue it.
+-- A caged Brainrot in the road: run through the cage to rescue it.
 -- Rescued Brainrots go to your base and raise your score multiplier.
 define({
 	name = "Rescue",
@@ -670,8 +702,8 @@ define({
 	minDistance = 120,
 	cooldown = 3,
 	build = function(ctx)
-		roofFloor(ctx)
-		skyline(ctx)
+		streetFloor(ctx)
+		cityScenery(ctx)
 		local brainrot = BrainrotData.PickCatchable(ctx.distance, ctx.rng)
 		if brainrot then
 			local lane = LANE_IDS[ctx.rng:NextInteger(1, 3)]
@@ -701,7 +733,7 @@ define({
 			model:PivotTo(CF(ctx, LANES[lane], 0.4, d) * CFrame.Angles(0, math.pi, 0))
 			model.Parent = plate
 			ModelFactory.NameTag(model, ("🔓 RESCUE %s %s  (+%dx)"):format(brainrot.icon, string.upper(brainrot.name), brainrot.bonus), color, 12)
-			coinLine(ctx, lane, math.max(d - 32, (ctx.flatFrom or 0) + 2), d - 8)
+			coinLine(ctx, lane, d - 32, d - 8)
 			obstacleRows(ctx, d + 16, ctx.length - EDGE, { Barricade = 1, OverheadSign = 1 })
 		end
 	end,
@@ -709,18 +741,18 @@ define({
 
 Segments.Definitions = defs
 
--- The start: the roof of Verity's tower. He bursts out of the stairwell
+-- The start: the street in front of Verity's HQ. He bursts out of the garage
 -- door behind you during the intro.
 function Segments.BuildStartArea(ctx: Ctx)
-	roofFloor(ctx)
-	skyline(ctx)
-	ground(ctx, { Name = "RoofBehind", Size = Vector3.new(ROAD_WIDTH, 2, 50), CFrame = CF(ctx, 0, -1, -25), Color = THEME.Roof, Material = Enum.Material.Asphalt })
+	streetFloor(ctx)
+	cityScenery(ctx)
+	ground(ctx, { Name = "RoadBehind", Size = Vector3.new(ROAD_WIDTH, 2, 60), CFrame = CF(ctx, 0, -1, -30), Color = THEME.Road, Material = Enum.Material.Asphalt })
 
-	-- Stairwell hut behind the player
-	local hut = scenery(ctx, { Name = "Stairwell", Size = Vector3.new(26, 18, 18), CFrame = CF(ctx, 0, 9, -26), Color = Color3.fromRGB(120, 90, 130), Material = Enum.Material.Brick })
-	scenery(ctx, { Parent = hut, Name = "Door", Size = Vector3.new(12, 13, 0.4), CFrame = CF(ctx, 0, 6.5, -16.9), Color = Color3.fromRGB(10, 8, 14), CanCollide = false })
-	local sign = scenery(ctx, { Parent = hut, Name = "HutSign", Size = Vector3.new(22, 3.5, 0.4), CFrame = CF(ctx, 0, 15.5, -16.8), Color = Color3.fromRGB(255, 90, 160), Material = Enum.Material.Neon })
-	Util.SurfaceLabel(sign, Enum.NormalId.Back, ("%s'S TOWER"):format(Config.Villain.Title), { PixelsPerStud = 12 })
+	-- Verity's HQ behind the player
+	local hq = scenery(ctx, { Name = "VerityHQ", Size = Vector3.new(60, 40, 30), CFrame = CF(ctx, 0, 20, -34), Color = Color3.fromRGB(120, 70, 140), Material = Enum.Material.Brick })
+	scenery(ctx, { Parent = hq, Name = "GarageDoor", Size = Vector3.new(24, 15, 0.4), CFrame = CF(ctx, 0, 7.5, -18.9), Color = Color3.fromRGB(10, 8, 14), CanCollide = false })
+	local sign = scenery(ctx, { Parent = hq, Name = "HQSign", Size = Vector3.new(34, 5, 0.4), CFrame = CF(ctx, 0, 20, -18.8), Color = Color3.fromRGB(255, 90, 160), Material = Enum.Material.Neon })
+	Util.SurfaceLabel(sign, Enum.NormalId.Back, ("🧠 %s HQ"):format(Config.Villain.Title), { PixelsPerStud = 12 })
 
 	local banner = scenery(ctx, { Name = "StartBanner", Size = Vector3.new(30, 5, 0.5), CFrame = CF(ctx, 0, 19, 32), Color = Color3.fromRGB(25, 20, 35) })
 	Util.SurfaceLabel(banner, Enum.NormalId.Back, ("RUN! %s IS COMING"):format(Config.Villain.Title), { PixelsPerStud = 12, TextColor = Color3.fromRGB(255, 200, 90) })

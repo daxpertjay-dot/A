@@ -54,7 +54,7 @@ local function playSound(id: string, volume: number?)
 	end)
 end
 
--- Runs happen across the rooftops of Brainrot City at sunset.
+-- Runs happen in the streets of Brainrot City at sunset.
 local lobbyLighting = {
 	ClockTime = Lighting.ClockTime,
 	OutdoorAmbient = Lighting.OutdoorAmbient,
