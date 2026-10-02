@@ -15,9 +15,14 @@ python3.11 tools/blender/props.py                     # lobby props → assets/m
 rojo build place.project.json -o build/BrainrotRunner.rbxl     # place file for Studio (with the map)
 ```
 
-There is no Roblox Studio here: the Lune tests are the only way to run the
-code. Run selene and the tests before every commit. After a change the user
-will play, rebuild the .rbxl and send it to them.
+Run selene and the tests before every commit.
+
+- **Cloud sessions** (claude.ai/code) have no Roblox Studio: the Lune tests
+  are the only way to run the code. After a change the user will play,
+  rebuild the .rbxl and send it to them.
+- **On the user's PC** with the Roblox Studio MCP connected, check changes in
+  Studio itself too (run code, inspect Workspace, playtest), and sync scripts
+  with `rojo serve` instead of sending place files. Still run the Lune tests.
 
 The lobby is a real map (`Workspace.Lobby`, file `map/Lobby.rbxm`) that the
 user edits in Studio. After changing `LobbyBuilder`/`PlotManager` building
@@ -28,7 +33,7 @@ The run's track sections are a map too (`Workspace.TrackAreas`, file
 `tools/bake_map.sh tracks`, with the same check first. The track test
 generates from the saved file, so a stale one shows up there.
 `default.project.json` (rojo serve) deliberately leaves Workspace alone.
-There's no way to see the maps here except by rendering the part data
+Without Studio, the only way to see the maps is to render the part data
 (deserialize the rbxm in Lune and draw it). Lune doesn't save a Model's
 WorldPivot, so anything that must keep its pivot through a map file needs a
 PrimaryPart (track sections have an `Origin` part).
