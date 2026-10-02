@@ -42,7 +42,7 @@ local list: { PowerUp } = {
 		name = "Super Sneakers",
 		icon = "👟",
 		color = Color3.fromRGB(90, 220, 110),
-		description = "Huge jumps: hop straight onto trains.",
+		description = "Huge jumps: hop onto wagons, shacks and roofs.",
 		durations = { 10, 12, 14, 16, 18, 20 },
 		spawnWeight = 25,
 	},

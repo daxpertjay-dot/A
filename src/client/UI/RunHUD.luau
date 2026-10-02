@@ -1,9 +1,10 @@
 --!strict
 -- Everything on screen during a run (Subway Surfers layout):
 --
---   top-left: distance · high score      top-right: SCORE + xMULTIPLIER, coins
---   top-centre: how close the villain is
+--   top-left: distance · high score      top-right: SCORE + xMULTIPLIER, coins,
+--   top-centre: how close the villain is            🔥 combo and ⚡ hype meters
 --   right side: active power-up timers    bottom-right: 🛹 hoverboard button
+--   trick pop-ups ("NEAR MISS! +2") next to the combo meter
 --
 -- Plus the "RUN STARTING..." fade, countdown, revive screen and results.
 -- Panels are built once in Init and only updated afterwards, so showing
@@ -14,15 +15,21 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AreaData = require(Shared.AreaData)
 local Config = require(Shared.Config)
 local PowerUpData = require(Shared.PowerUpData)
+local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
+local Signal = require(Shared.Signal)
 local Util = require(Shared.Util)
 
 local RunController = require(script.Parent.Parent.RunController)
 local UIKit = require(script.Parent.UIKit)
 
 local RunHUD = {}
+
+-- Fired by "BACK TO BASE" on the results screen.
+RunHUD.Leave = Signal.new()
 
 local C = UIKit.Colors
 local gui: ScreenGui
@@ -36,13 +43,22 @@ local multiplierBadge: TextLabel
 local coinsLabel: TextLabel
 local distanceLabel: TextLabel
 local highLabel: TextLabel
+local areaLabel: TextLabel
 local chaseFill: Frame
 local chaseLabel: TextLabel
 local powerBars: Frame
 local hoverButton: TextButton
 local tipLabel: TextLabel
+local comboRow: Frame
+local comboLabel: TextLabel
+local comboFill: Frame
+local hypeRow: Frame
+local hypeLabel: TextLabel
+local hypeFill: Frame
+local popupHolder: Frame
 local updateConnection: RBXScriptConnection? = nil
 local highScore = 0
+local area = AreaData.First
 
 -- Revive panel pieces (built once)
 local caughtPanel: Frame
@@ -55,10 +71,57 @@ local caughtToken = 0
 
 -- Results panel pieces (built once)
 local resultsPanel: Frame
-local resultsBody: Frame
+local resultsBody: ScrollingFrame
 
 local function tweenIn(instance: GuiObject)
 	UIKit.Pop(instance)
+end
+
+-- Live multipliers change every frame: keep them short (x12.3, x154).
+local function shortMultiplier(n: number): string
+	if n >= 100 then
+		return ("x%d"):format(math.floor(n))
+	end
+	local s = ("%.1f"):format(n):gsub("%.0$", "")
+	return "x" .. s
+end
+
+local TRICK_LABELS: { [string]: string } = {
+	Clear = "NICE!",
+	NearMiss = "NEAR MISS!",
+	Roof = "ROOF RUN!",
+	Smash = "SMASH!",
+	CrashThrough = "CRASH THROUGH!",
+	Coins = "COIN STREAK!",
+	PowerUp = "POWER-UP!",
+	MysteryBox = "LOOT!",
+	Rescue = "RESCUE!",
+}
+
+-- "NEAR MISS! +2" floating up next to the combo meter.
+local function trickPopup(kind: string, gained: number)
+	local text = TRICK_LABELS[kind]
+	if not text or gained <= 0 then
+		return
+	end
+	local label = UIKit.Label({
+		Text = ("%s  +%s"):format(text, if gained == math.floor(gained) then tostring(gained) else ("%.1f"):format(gained)),
+		TextColor3 = if kind == "NearMiss" or kind == "Roof" then C.Accent2 else Color3.fromRGB(255, 170, 60),
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 0),
+		Size = UDim2.new(1, 0, 0, 28),
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Parent = popupHolder,
+	})
+	UIKit.Pop(label)
+	TweenService:Create(label, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Position = UDim2.new(1, 0, 0, -46), TextTransparency = 1 }):Play()
+	local stroke = label:FindFirstChildOfClass("UIStroke")
+	if stroke then
+		TweenService:Create(stroke, TweenInfo.new(0.9), { Transparency = 1 }):Play()
+	end
+	task.delay(0.95, function()
+		label:Destroy()
+	end)
 end
 
 -- ───────────────────────────── fade / text ─────────────────────────────
@@ -128,11 +191,30 @@ local function update()
 	local t = os.clock()
 	scoreLabel.Text = Util.FormatNumber(state.score)
 	local multiplier = RunController.CurrentMultiplier()
-	multiplierBadge.Text = "x" .. multiplier
+	multiplierBadge.Text = shortMultiplier(multiplier)
 	multiplierBadge.BackgroundColor3 = if t < state.boosterUntil then Color3.fromRGB(80, 170, 255) else C.Accent
+
+	-- 🔥 Combo and ⚡ Hype meters
+	local stacks = state.combo.stacks
+	comboRow.Visible = stacks > 0.05
+	if comboRow.Visible then
+		comboLabel.Text = ("🔥 COMBO %s"):format(shortMultiplier(Progression.ComboMultiplier(state.combo)))
+		comboFill.Size = UDim2.fromScale(math.clamp(stacks / Config.Combo.MaxStacks, 0, 1), 1)
+		local draining = t - state.combo.lastAction > Config.Combo.Grace
+		comboFill.BackgroundColor3 = if draining and t % 0.4 < 0.2 then C.Bad else Color3.fromRGB(255, 140, 40)
+	end
+	hypeRow.Visible = state.hype > 0.001
+	if hypeRow.Visible then
+		hypeLabel.Text = ("⚡ HYPE %s"):format(shortMultiplier(Progression.HypeMultiplier(state.hype)))
+		hypeFill.Size = UDim2.fromScale(math.clamp(state.hype, 0, 1), 1)
+	end
 	coinsLabel.Text = "🪙 " .. Util.FormatNumber(state.coins)
 	distanceLabel.Text = Util.FormatNumber(state.meters) .. "m"
 	highLabel.Text = if state.score > highScore and highScore > 0 then "🏆 NEW HIGH SCORE!" else ("🏆 " .. Util.FormatNumber(highScore))
+	local nextArea = AreaData.Next(area)
+	areaLabel.Text = if nextArea
+		then ("%s %s  ·  %s at %s"):format(area.icon, area.name, nextArea.icon, Util.FormatNumber(nextArea.fromScore))
+		else ("%s %s"):format(area.icon, area.name)
 
 	local ratio = math.clamp(state.gap / Config.Chase.MaxGap, 0, 1)
 	chaseFill.Size = UDim2.fromScale(ratio, 1)
@@ -169,10 +251,13 @@ function RunHUD.Prepare(info: any)
 	caughtPanel.Visible = false
 	resultsPanel.Visible = false
 	highScore = info.highScore or 0
+	area = AreaData.Get(info.area) or AreaData.First
 	hideFade()
 	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-	tipLabel.Text = ("⭐ Score multiplier x%d  ·  %s"):format(
-		info.multiplier or 1,
+	local hype = info.hype or 0
+	tipLabel.Text = ("⭐ Multiplier %s%s  ·  %s"):format(
+		Progression.FormatMultiplier(info.multiplier or 1),
+		if hype > 0.01 then ("  ·  ⚡ HYPED %s"):format(shortMultiplier(Progression.HypeMultiplier(hype))) else "",
 		if touch then "swipe to move · double-tap for 🛹" else "A/D lanes · W jump · S roll · E hoverboard"
 	)
 	tipLabel.Visible = true
@@ -181,6 +266,16 @@ function RunHUD.Prepare(info: any)
 		updateConnection:Disconnect()
 	end
 	updateConnection = RunService.RenderStepped:Connect(update)
+end
+
+-- The runner entered a new area: big banner, and the HUD line follows.
+function RunHUD.SetArea(id: string)
+	local new = AreaData.Get(id)
+	if not new or new == area then
+		return
+	end
+	area = new
+	RunHUD.Big(("%s %s"):format(new.icon, string.upper(new.name)), new.color, 2.5)
 end
 
 -- 3 → 2 → 1 → RUN! against the server's go time.
@@ -243,7 +338,9 @@ function RunHUD.ShowResults(results: any)
 	RunHUD.HideCaught()
 	hud.Visible = false
 	tipLabel.Visible = false
+	fade.Visible = false -- the run may have ended during the "RUN STARTING..." fade
 	UIKit.Clear(resultsBody)
+	resultsBody.CanvasPosition = Vector2.zero
 
 	local order = 0
 	local function line(text: string, color: Color3?, height: number?)
@@ -257,16 +354,31 @@ function RunHUD.ShowResults(results: any)
 
 	line(if results.newHighScore then "🏆 NEW HIGH SCORE! 🏆" else "RUN OVER", C.Gold, 36)
 	line(Util.FormatNumber(results.score), C.Text, 54)
-	line(("📏 %sm  ×  ⭐ x%d multiplier"):format(Util.FormatNumber(results.distance), results.multiplier), C.Muted)
+	line(("📏 %sm  ×  ⭐ %s multiplier"):format(Util.FormatNumber(results.distance), Progression.FormatMultiplier(results.multiplier)), C.Muted)
+	if (results.bestCombo or 1) > 1.05 then
+		line(("🔥 Best combo %s"):format(shortMultiplier(results.bestCombo)), Color3.fromRGB(255, 160, 60))
+	end
+	if (results.hypeStart or 0) > 0.01 then
+		line(
+			("⚡ Hype %s → %s"):format(shortMultiplier(Progression.HypeMultiplier(results.hypeStart)), shortMultiplier(Progression.HypeMultiplier(results.hypeLeft or 0))),
+			C.Accent2
+		)
+	end
 	line(("🪙 +%s coins"):format(Util.FormatNumber(results.totalCoins)) .. (if results.boxCoins > 0 then ("  (❓ %s from mystery boxes)"):format(Util.FormatNumber(results.boxCoins)) else ""), C.Gold)
 	if results.boxBoards > 0 then
 		line(("🛹 +%d hoverboard%s"):format(results.boxBoards, if results.boxBoards == 1 then "" else "s"), Color3.fromRGB(120, 200, 255))
 	end
 	for _, b in results.rescued do
-		line(("🔓 Rescued %s %s  (+%dx)%s"):format(b.icon, b.name, b.bonus, if b.isNew then " — NEW!" else ""), Color3.fromRGB(255, 140, 230))
+		line(("🔓 Rescued %s %s  (+%s)%s"):format(b.icon, b.label or b.name, Progression.FormatMultiplier(b.bonus), if b.isNew then " — NEW!" else ""), Color3.fromRGB(255, 140, 230))
 	end
-	if results.newMultiplier > results.multiplier then
-		line(("⭐ Your multiplier is now x%d!"):format(results.newMultiplier), Color3.fromRGB(255, 200, 60))
+	if (results.xp or 0) > 0 then
+		line(("🧠 Your Brainrots gained +%s XP"):format(Util.FormatNumber(results.xp)), Color3.fromRGB(190, 150, 255))
+	end
+	for _, up in results.levelUps or {} do
+		line(("⬆️ %s %s reached Lv %d!  (+%s)"):format(up.icon, up.name, up.to, Progression.FormatMultiplier(up.bonus)), C.Good)
+	end
+	if results.newMultiplier > results.multiplier + 0.001 then
+		line(("⭐ Your multiplier is now %s!"):format(Progression.FormatMultiplier(results.newMultiplier)), Color3.fromRGB(255, 200, 60))
 	elseif #results.rescued > 0 then
 		line("Your pedestals are full — buy more in ⬆️ Upgrades to use them!", C.Muted)
 	end
@@ -301,13 +413,32 @@ function RunHUD.Init(playerGui: PlayerGui)
 	-- Score (top right)
 	local scoreBox = UIKit.New("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 46), Size = UDim2.fromOffset(280, 100), BackgroundTransparency = 1, Parent = hud })
 	scoreLabel = UIKit.Label({ Text = "0", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -70, 0, 0), Size = UDim2.new(1, -70, 0, 52), TextXAlignment = Enum.TextXAlignment.Right, Parent = scoreBox })
-	multiplierBadge = UIKit.Label({ Text = "x1", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 4), Size = UDim2.fromOffset(62, 44), BackgroundTransparency = 0, BackgroundColor3 = C.Accent, Parent = scoreBox })
+	multiplierBadge = UIKit.Label({ Text = "x1", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 4), Size = UDim2.fromOffset(84, 44), BackgroundTransparency = 0, BackgroundColor3 = C.Accent, Parent = scoreBox })
 	UIKit.Corner(12).Parent = multiplierBadge
+	scoreLabel.Position = UDim2.new(1, -92, 0, 0)
+	scoreLabel.Size = UDim2.new(1, -92, 0, 52)
 	coinsLabel = UIKit.Label({ Text = "🪙 0", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 58), Size = UDim2.new(1, 0, 0, 34), TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = C.Gold, Parent = scoreBox })
+
+	-- 🔥 Combo and ⚡ Hype meters under the score
+	local function meter(order: number, color: Color3): (Frame, TextLabel, Frame)
+		local row = UIKit.New("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 150 + (order - 1) * 46), Size = UDim2.fromOffset(220, 40), BackgroundColor3 = C.Panel, BackgroundTransparency = 0.2, Visible = false, Parent = hud })
+		UIKit.Corner(10).Parent = row
+		local text = UIKit.Label({ Text = "", Position = UDim2.fromOffset(8, 2), Size = UDim2.new(1, -16, 0, 22), TextXAlignment = Enum.TextXAlignment.Left, Parent = row })
+		local track = UIKit.New("Frame", { BackgroundColor3 = Color3.fromRGB(30, 30, 40), Position = UDim2.fromOffset(8, 27), Size = UDim2.new(1, -16, 0, 8), Parent = row })
+		UIKit.Corner(4).Parent = track
+		local fill = UIKit.New("Frame", { BackgroundColor3 = color, Size = UDim2.fromScale(0, 1), Parent = track })
+		UIKit.Corner(4).Parent = fill
+		return row, text, fill
+	end
+	comboRow, comboLabel, comboFill = meter(1, Color3.fromRGB(255, 140, 40))
+	hypeRow, hypeLabel, hypeFill = meter(2, C.Accent2)
+	popupHolder = UIKit.New("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -244, 0, 152), Size = UDim2.fromOffset(240, 30), BackgroundTransparency = 1, Parent = hud })
 
 	-- Distance + high score (top left)
 	distanceLabel = UIKit.Label({ Text = "0m", Position = UDim2.fromOffset(20, 50), Size = UDim2.fromOffset(200, 36), TextXAlignment = Enum.TextXAlignment.Left, Parent = hud })
 	highLabel = UIKit.Label({ Text = "", Position = UDim2.fromOffset(20, 88), Size = UDim2.fromOffset(240, 26), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Muted, Parent = hud })
+	-- The area you're in, and the score where the next one starts.
+	areaLabel = UIKit.Label({ Text = "", Position = UDim2.fromOffset(20, 116), Size = UDim2.fromOffset(300, 24), TextXAlignment = Enum.TextXAlignment.Left, Parent = hud })
 
 	-- Villain proximity (top centre)
 	local chase = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 52), Size = UDim2.fromOffset(300, 16), BackgroundColor3 = Color3.fromRGB(40, 20, 20), Parent = hud })
@@ -363,13 +494,14 @@ function RunHUD.Init(playerGui: PlayerGui)
 	end).Parent = caughtPanel
 
 	-- ── Results panel ──
-	resultsPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(520, 500), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 10, Parent = gui })
+	resultsPanel = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 540, 0.86, 0), BackgroundColor3 = C.Panel, Visible = false, ZIndex = 10, Parent = gui })
+	UIKit.New("UISizeConstraint", { MaxSize = Vector2.new(540, 600), Parent = resultsPanel })
 	UIKit.Corner(18).Parent = resultsPanel
 	UIKit.Stroke(4, C.Gold).Parent = resultsPanel
-	resultsBody = UIKit.New("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(16, 14), Size = UDim2.new(1, -32, 1, -90), Parent = resultsPanel })
+	resultsBody = UIKit.Scroller(resultsPanel, { Position = UDim2.fromOffset(16, 14), Size = UDim2.new(1, -32, 1, -90) })
 	UIKit.List(nil, 6).Parent = resultsBody
 	UIKit.Button({ Text = "BACK TO BASE", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -16), Size = UDim2.new(0.7, 0, 0, 54), BackgroundColor3 = C.Good }, function()
-		Remotes.Event("LeaveResults"):FireServer()
+		RunHUD.Leave:Fire()
 	end).Parent = resultsPanel
 
 	fade = UIKit.New("Frame", { BackgroundColor3 = Color3.new(0, 0, 0), Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 50, Parent = gui })
@@ -378,6 +510,7 @@ function RunHUD.Init(playerGui: PlayerGui)
 	RunController.Event:Connect(function(text: string, color: Color3?)
 		RunHUD.Flash(text, color)
 	end)
+	RunController.Style:Connect(trickPopup)
 end
 
 return RunHUD

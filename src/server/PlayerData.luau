@@ -10,7 +10,9 @@ local RunService = game:GetService("RunService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
+local MutationData = require(Shared.MutationData)
 local PowerUpData = require(Shared.PowerUpData)
+local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
 
 export type Stats = {
@@ -26,8 +28,11 @@ export type Stats = {
 export type Profile = {
 	Version: number,
 	Coins: number,
-	Brainrots: { [string]: number }, -- brainrotId -> copies rescued
+	Brainrots: { [string]: number }, -- key ("Id" or "Id:Mutation") -> copies rescued
 	Collection: { [string]: boolean }, -- brainrotId -> ever rescued
+	BrainrotXP: { [string]: number }, -- brainrotId -> XP (levels are per Brainrot kind)
+	Hype: number, -- 0..1, charged by your base while you're away
+	HypeUpdated: number, -- os.time() of the last Hype charge
 	Pedestals: number, -- Brainrot pedestals on your base
 	Upgrades: { [string]: number }, -- powerUpId -> level 0..5
 	Hoverboards: number,
@@ -58,10 +63,13 @@ local function newProfile(): Profile
 		upgrades[p.id] = 0
 	end
 	return {
-		Version = 2,
+		Version = 3,
 		Coins = Config.Economy.StartingCoins,
 		Brainrots = { [BrainrotData.StarterId] = 1 },
 		Collection = { [BrainrotData.StarterId] = true },
+		BrainrotXP = {},
+		Hype = Config.Hype.StartingHype,
+		HypeUpdated = os.time(),
 		Pedestals = Config.Score.StartingPedestals,
 		Upgrades = upgrades,
 		Hoverboards = Config.Economy.StartingHoverboards,
@@ -91,7 +99,8 @@ local function reconcile(data: any, template: any): any
 	return data
 end
 
--- v1 saves (crates, equipment, buddies, base income) → v2.
+-- v1 saves (crates, equipment, buddies, base income) → v2. v3 added Brainrot
+-- XP and Hype (older players start fully hyped).
 local OBSOLETE = { "Inventory", "Crates", "Loadout", "Buddy", "PendingIncome", "LastOnline" }
 local function migrate(data: any): any
 	for _, key in OBSOLETE do
@@ -100,6 +109,11 @@ local function migrate(data: any): any
 	if (data.Version or 1) < 2 then
 		data.Version = 2
 		data.Pedestals = Config.Score.StartingPedestals
+	end
+	if data.Version < 3 then
+		data.Version = 3
+		data.Hype = Config.Hype.StartingHype
+		data.HypeUpdated = os.time()
 	end
 	return data
 end
@@ -134,21 +148,30 @@ end
 
 -- ───────────────────────────── score multiplier ─────────────────────────────
 
--- Brainrots standing on the base's pedestals, best bonus first. Every rescued
--- copy can take a pedestal.
+-- Bonus of an owned Brainrot: its kind's level × its mutation.
+function PlayerData.BrainrotBonus(profile: Profile, key: string): number
+	local id, mutation = MutationData.Split(key)
+	return Progression.Bonus(id, profile.BrainrotXP[id]) * MutationData.Multiplier(mutation)
+end
+
+-- Brainrots standing on the base's pedestals, best (levelled) bonus first.
+-- Every rescued copy can take a pedestal.
 function PlayerData.DisplayedBrainrots(profile: Profile): { string }
 	local copies = {}
-	for id, count in profile.Brainrots do
-		if BrainrotData.Get(id) then
+	for key, count in profile.Brainrots do
+		if BrainrotData.Get((MutationData.Split(key))) then
 			for _ = 1, count do
-				table.insert(copies, id)
+				table.insert(copies, key)
 			end
 		end
 	end
+	local bonus: { [string]: number } = {}
+	for id in profile.Brainrots do
+		bonus[id] = PlayerData.BrainrotBonus(profile, id)
+	end
 	table.sort(copies, function(a, b)
-		local da, db = BrainrotData.Get(a) :: BrainrotData.Brainrot, BrainrotData.Get(b) :: BrainrotData.Brainrot
-		if da.bonus ~= db.bonus then
-			return da.bonus > db.bonus
+		if bonus[a] ~= bonus[b] then
+			return bonus[a] > bonus[b]
 		end
 		return a < b
 	end)
@@ -159,13 +182,50 @@ function PlayerData.DisplayedBrainrots(profile: Profile): { string }
 	return out
 end
 
--- 1 + the bonus of every Brainrot on a pedestal.
+-- 1 + the (levelled) bonus of every Brainrot on a pedestal.
 function PlayerData.Multiplier(profile: Profile): number
 	local total = Config.Score.BaseMultiplier
 	for _, id in PlayerData.DisplayedBrainrots(profile) do
-		total += (BrainrotData.Get(id) :: BrainrotData.Brainrot).bonus
+		total += PlayerData.BrainrotBonus(profile, id)
 	end
 	return total
+end
+
+-- ───────────────────────────── hype ─────────────────────────────
+
+-- Charges Hype for the time since it was last charged. `inLobby` charges at
+-- the faster in-server rate. Returns how much was added.
+function PlayerData.ChargeHype(profile: Profile, inLobby: boolean): number
+	local now = os.time()
+	local elapsed = math.max(0, now - (profile.HypeUpdated or now))
+	profile.HypeUpdated = now
+	local before = profile.Hype
+	if before < 1 and elapsed > 0 then
+		profile.Hype = math.min(1, before + elapsed * Progression.HypeRate(PlayerData.Multiplier(profile), inLobby))
+	end
+	return profile.Hype - before
+end
+
+-- Gives every Brainrot on the base `xp`; returns the ones that levelled up.
+function PlayerData.AwardBrainrotXP(profile: Profile, xp: number): { { id: string, from: number, to: number, bonus: number } }
+	local levelUps = {}
+	if xp <= 0 then
+		return levelUps
+	end
+	local seen: { [string]: boolean } = {}
+	for _, key in PlayerData.DisplayedBrainrots(profile) do
+		local id = MutationData.Split(key)
+		if not seen[id] then
+			seen[id] = true
+			local before = Progression.Level(profile.BrainrotXP[id])
+			profile.BrainrotXP[id] = (profile.BrainrotXP[id] or 0) + xp
+			local after = Progression.Level(profile.BrainrotXP[id])
+			if after > before then
+				table.insert(levelUps, { id = id, from = before, to = after, bonus = Progression.Bonus(id, profile.BrainrotXP[id]) })
+			end
+		end
+	end
+	return levelUps
 end
 
 -- ───────────────────────────── access ─────────────────────────────
@@ -195,6 +255,9 @@ function PlayerData.Snapshot(player: Player): any
 		Pedestals = profile.Pedestals,
 		Displayed = PlayerData.DisplayedBrainrots(profile),
 		Multiplier = PlayerData.Multiplier(profile),
+		BrainrotXP = profile.BrainrotXP,
+		Hype = profile.Hype,
+		HypePerHour = Progression.HypeRate(PlayerData.Multiplier(profile), true) * 3600,
 		Upgrades = profile.Upgrades,
 		Hoverboards = profile.Hoverboards,
 		Stats = profile.Stats,
@@ -223,7 +286,7 @@ function PlayerData.Changed(player: Player)
 			best.Value = math.floor(profile.Stats.HighScore)
 		end
 		if multiplier then
-			multiplier.Value = "x" .. PlayerData.Multiplier(profile)
+			multiplier.Value = Progression.FormatMultiplier(PlayerData.Multiplier(profile))
 		end
 	end
 	Remotes.Event("DataUpdated"):FireClient(player, PlayerData.Snapshot(player))
@@ -241,12 +304,13 @@ function PlayerData.AddCoins(player: Player, amount: number)
 	PlayerData.Changed(player)
 end
 
-function PlayerData.GrantBrainrot(player: Player, id: string, count: number?)
+function PlayerData.GrantBrainrot(player: Player, key: string, count: number?)
 	local profile = profiles[player]
+	local id = MutationData.Split(key)
 	if not profile or not BrainrotData.Get(id) then
 		return
 	end
-	profile.Brainrots[id] = (profile.Brainrots[id] or 0) + (count or 1)
+	profile.Brainrots[key] = (profile.Brainrots[key] or 0) + (count or 1)
 	profile.Collection[id] = true
 	PlayerData.Changed(player)
 end
@@ -286,6 +350,8 @@ local function onPlayerAdded(player: Player)
 			return
 		else
 			profile = if data then reconcile(migrate(data), newProfile()) else newProfile()
+			-- Hype your base built up while you were offline.
+			PlayerData.ChargeHype(profile, false)
 		end
 	else
 		profile = newProfile()
@@ -324,6 +390,23 @@ function PlayerData.Init()
 		PlayerData.Await(player, 10)
 		return PlayerData.Snapshot(player)
 	end
+
+	-- Hype charges while you hang out in the lobby (not during runs: the run
+	-- manager owns Hype while it's being spent).
+	task.spawn(function()
+		while true do
+			task.wait(15)
+			for player, profile in profiles do
+				if not player:GetAttribute("InRun") and profile.Hype < 1 then
+					local before = math.floor(profile.Hype * 100)
+					PlayerData.ChargeHype(profile, true)
+					if math.floor(profile.Hype * 100) ~= before then
+						PlayerData.Changed(player)
+					end
+				end
+			end
+		end
+	end)
 
 	-- Autosave
 	task.spawn(function()

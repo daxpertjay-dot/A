@@ -1,33 +1,44 @@
 --!strict
--- Server-controlled endless track. Generates segments ahead of the runner
--- (the player never sees the end of the map) and removes them once they are
--- far enough behind to keep instance counts flat.
+-- Server-controlled endless track. Lays section templates (TrackAreas) end
+-- to end ahead of the runner — the player never sees the end of the map —
+-- and removes them once they're far enough behind to keep instance counts
+-- flat.
 --
---   PLAYER → [current] → [generated] → [generated] → … more map generates
+--   PLAYER → [current] → [section] → [section] → … more track is placed
+--
+-- The area changes as the run's score climbs (AreaData): when the projected
+-- score at the next section reaches the next area, its Gate section goes
+-- down and the track continues with that area's sections. Each section
+-- gets its own roll of power-ups, mystery boxes and caged Brainrots.
 
 local PhysicsService = game:GetService("PhysicsService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AreaData = require(Shared.AreaData)
 local Config = require(Shared.Config)
 
-local Segments = require(script.Parent.Segments)
+local Pickups = require(script.Parent.Pickups)
+local TrackAreas = require(script.Parent.TrackAreas)
 
 local TrackGenerator = {}
 TrackGenerator.__index = TrackGenerator
 
-export type SegmentRecord = { model: Model, startD: number, endD: number, name: string, index: number }
+export type SegmentRecord = { model: Model, startD: number, endD: number, name: string, kind: string, area: string, index: number }
 
 export type Track = typeof(setmetatable(
 	{} :: {
 		folder: Folder,
 		origin: Vector3,
 		rng: Random,
+		library: TrackAreas.Library,
 		segments: { SegmentRecord },
 		generatedUntil: number,
 		index: number,
-		lastUsed: { [string]: number },
-		lastName: string,
-		lastHeight: number,
+		areaIndex: number,
+		lastKindAt: { [string]: number },
+		lastKind: string,
+		recent: { Model },
+		scoreAt: (d: number) -> number,
 	},
 	TrackGenerator
 ))
@@ -60,7 +71,10 @@ function TrackGenerator.RegisterCollisionGroups()
 	set("Debris", "Debris", false)
 end
 
-function TrackGenerator.new(parent: Instance, origin: Vector3, seed: number): Track
+-- `scoreAt(d)` predicts the run's score when the runner reaches track
+-- distance d (studs); it decides which area each new section belongs to.
+-- Without it, score = meters run (a ×1 multiplier).
+function TrackGenerator.new(parent: Instance, origin: Vector3, seed: number, scoreAt: ((d: number) -> number)?): Track
 	local folder = Instance.new("Folder")
 	folder.Name = "Track"
 	folder.Parent = parent
@@ -69,118 +83,221 @@ function TrackGenerator.new(parent: Instance, origin: Vector3, seed: number): Tr
 		folder = folder,
 		origin = origin,
 		rng = Random.new(seed),
+		library = TrackAreas.Load(),
 		segments = {},
 		generatedUntil = 0,
 		index = 0,
-		lastUsed = {},
-		lastName = "",
-		lastHeight = 0,
+		areaIndex = 1,
+		lastKindAt = {},
+		lastKind = "",
+		recent = {},
+		scoreAt = scoreAt or function(d: number): number
+			return d * Config.Run.MetersPerStud * Config.Score.PointsPerMeter
+		end,
 	}, TrackGenerator)
 
-	self:_buildStartArea()
+	local first = self.library[AreaData.First.id]
+	local start = first.start or first.gate
+	if start then
+		self:_place(start, 0)
+	end
 	for _ = 1, Config.Run.SegmentsAhead do
 		self:_generateNext()
 	end
 	return self
 end
 
-local function newSegmentModel(parent: Instance, name: string, index: number): Model
-	local model = Instance.new("Model")
-	model.Name = ("%03d_%s"):format(index, name)
-	local coins = Instance.new("Folder")
-	coins.Name = "Coins"
-	coins.Parent = model
+-- Fills a placed section's spots: at most one power-up / mystery box from the
+-- shared spots, the spots with their own chance, and a caged Brainrot.
+function TrackGenerator._fillSpots(self: Track, model: Model, area: string)
+	local spots = model:FindFirstChild("Spots")
+	if not spots then
+		return
+	end
+	local rng = self.rng
 	local pickups = Instance.new("Folder")
 	pickups.Name = "Pickups"
 	pickups.Parent = model
-	model.Parent = parent
-	return model
+	local shared: { BasePart } = {}
+	local preferred: { BasePart } = {}
+	local cages: { BasePart } = {}
+	for _, s in spots:GetChildren() do
+		if not s:IsA("BasePart") then
+			continue
+		end
+		if s.Name == "CageSpot" then
+			table.insert(cages, s)
+		elseif s.Name == "PickupSpot" then
+			local chance = s:GetAttribute("Chance")
+			local prefer = s:GetAttribute("Prefer")
+			local at = s.Position - Vector3.new(0, 1, 0)
+			if type(chance) == "number" then
+				if rng:NextNumber() < chance then
+					if prefer == "MysteryBox" then
+						Pickups.MysteryBox(pickups, at)
+					else
+						Pickups.PowerUp(pickups, at, rng, if type(prefer) == "string" then prefer else nil)
+					end
+				end
+			else
+				table.insert(shared, s)
+				if type(prefer) == "string" then
+					table.insert(preferred, s)
+				end
+			end
+		end
+	end
+	local P = Config.PowerUps
+	if #preferred > 0 and rng:NextNumber() < P.BoostBeforeTallChance then
+		local s = preferred[rng:NextInteger(1, #preferred)]
+		Pickups.PowerUp(pickups, s.Position - Vector3.new(0, 1, 0), rng, s:GetAttribute("Prefer") :: string)
+	elseif #shared > 0 then
+		local at = shared[rng:NextInteger(1, #shared)].Position - Vector3.new(0, 1, 0)
+		if rng:NextNumber() < P.SpawnChancePerSegment then
+			Pickups.PowerUp(pickups, at, rng)
+		elseif rng:NextNumber() < P.MysteryBoxChancePerSegment then
+			Pickups.MysteryBox(pickups, at)
+		end
+	end
+	if #cages > 0 then
+		local s = cages[rng:NextInteger(1, #cages)]
+		Pickups.Cage(pickups, s.Position - Vector3.new(0, 1, 0), area, rng)
+	end
+	spots:Destroy()
 end
 
-function TrackGenerator._buildStartArea(self: Track)
-	local length = Config.Run.StartAreaLength
-	local model = newSegmentModel(self.folder, "StartArea", 0)
-	Segments.BuildStartArea({
-		folder = model,
-		origin = self.origin,
-		startD = 0,
-		length = length,
-		rng = self.rng,
-		difficulty = 0,
-		distance = 0,
-		height = 0,
-		prevHeight = 0,
-	})
-	table.insert(self.segments, { model = model, startD = -60, endD = length, name = "StartArea", index = 0 })
-	self.generatedUntil = length
+function TrackGenerator._place(self: Track, template: TrackAreas.Template, startD: number)
+	local model = TrackAreas.Place(template, self.origin, startD)
+	model.Name = ("%03d_%s"):format(self.index, template.model.Name)
+	self:_fillSpots(model, template.area)
+	-- Parent last: the client registers obstacles as they replicate, so
+	-- their attributes must already be set.
+	model.Parent = self.folder
+	table.insert(self.segments, { model = model, startD = startD, endD = startD + template.length, name = template.model.Name, kind = template.kind, area = template.area, index = self.index })
+	self.lastKindAt[template.kind] = self.index
+	self.lastKind = template.kind
+	table.insert(self.recent, template.model)
+	if #self.recent > Config.Areas.RecentTemplates then
+		table.remove(self.recent, 1)
+	end
+	self.generatedUntil = startD + template.length
 end
 
--- Chooses the next segment: weighted random among definitions unlocked at
--- this distance, off cooldown and not an immediate repeat.
-function TrackGenerator._choose(self: Track, distance: number): Segments.SegmentDef
-	local candidates = {}
+-- Difficulty 0-2: rises with the distance run; later areas start at medium.
+function TrackGenerator._difficulty(self: Track, startD: number): number
+	local meters = startD * Config.Run.MetersPerStud
+	local difficulty = math.clamp(math.floor(meters / Config.Areas.DifficultyStep), 0, 2)
+	if self.areaIndex > 1 then
+		difficulty = math.max(difficulty, 1)
+	end
+	return difficulty
+end
+
+local function pickWeighted<T>(rng: Random, items: { T }, weightOf: (T) -> number): T?
 	local total = 0
-	for _, def in Segments.Definitions do
-		local last = self.lastUsed[def.name]
-		local offCooldown = last == nil or (self.index - last) > def.cooldown
-		local notRepeat = def.name ~= self.lastName or def.name == "Yard"
-		if distance >= def.minDistance and offCooldown and notRepeat then
-			table.insert(candidates, def)
-			total += def.weight
+	for _, item in items do
+		total += weightOf(item)
+	end
+	if total <= 0 then
+		return nil
+	end
+	local roll = rng:NextNumber() * total
+	for _, item in items do
+		roll -= weightOf(item)
+		if roll < 0 then
+			return item
 		end
 	end
-	if #candidates == 0 then
-		return Segments.Definitions[1]
-	end
-	local roll = self.rng:NextNumber() * total
-	for _, def in candidates do
-		if roll < def.weight then
-			return def
+	return items[#items]
+end
+
+-- Picks the next section of an area: a kind by weight (off cooldown, and not
+-- the same kind twice unless it has no cooldown), then one of that kind's
+-- layouts at the hardest difficulty unlocked, avoiding recent repeats.
+function TrackGenerator._choose(self: Track, set: TrackAreas.AreaSet, difficulty: number): TrackAreas.Template?
+	local kinds = {}
+	for kind in set.kinds do
+		local cooldown = set.cooldowns[kind] or 0
+		local last = self.lastKindAt[kind]
+		local offCooldown = last == nil or (self.index - last) > cooldown
+		local repeatOk = kind ~= self.lastKind or cooldown == 0
+		if offCooldown and repeatOk then
+			table.insert(kinds, kind)
 		end
-		roll -= def.weight
 	end
-	return candidates[#candidates]
+	table.sort(kinds) -- same seed, same track
+	local kind = pickWeighted(self.rng, kinds, function(k)
+		return set.weights[k] or 0
+	end)
+	if not kind then
+		return nil
+	end
+	local byDifficulty = set.kinds[kind]
+	local layouts: { TrackAreas.Template }? = nil
+	for level = difficulty, 0, -1 do
+		if byDifficulty[level] then
+			layouts = byDifficulty[level]
+			break
+		end
+	end
+	if not layouts then
+		-- Only harder layouts exist for this kind: use the easiest of them.
+		for level = difficulty + 1, 2 do
+			if byDifficulty[level] then
+				layouts = byDifficulty[level]
+				break
+			end
+		end
+	end
+	if not layouts then
+		return nil
+	end
+	local fresh = {}
+	for _, t in layouts do
+		if not table.find(self.recent, t.model) then
+			table.insert(fresh, t)
+		end
+	end
+	local pool = if #fresh > 0 then fresh else layouts
+	return pool[self.rng:NextInteger(1, #pool)]
 end
 
 function TrackGenerator._generateNext(self: Track)
 	self.index += 1
 	local startD = self.generatedUntil
-	local distance = startD * Config.Run.MetersPerStud
-	local def = self:_choose(distance)
-	-- Roofs change height from building to building (ramps go up, drops go down).
-	local height = self.lastHeight
-	local roll = self.rng:NextNumber()
-	if roll < 0.2 then
-		height += 4
-	elseif roll < 0.32 then
-		height += 8
-	elseif roll < 0.55 then
-		height -= 4
-	elseif roll < 0.65 then
-		height -= 8
+	-- Move on to the next area once the score there would reach it.
+	local nextArea = AreaData.List[self.areaIndex + 1]
+	if nextArea and self.library[nextArea.id] and self.scoreAt(startD) >= nextArea.fromScore then
+		self.areaIndex += 1
+		local gate = self.library[nextArea.id].gate
+		if gate then
+			self:_place(gate, startD)
+			return
+		end
 	end
-	height = math.clamp(height, 0, 12)
-	local model = newSegmentModel(self.folder, def.name, self.index)
-	model:SetAttribute("RoofHeight", height)
-	def.build({
-		folder = model,
-		origin = self.origin,
-		startD = startD,
-		length = Config.Run.SegmentLength,
-		rng = self.rng,
-		difficulty = math.clamp(distance / 4000, 0, 1),
-		distance = distance,
-		height = height,
-		prevHeight = self.lastHeight,
-	})
-	self.lastHeight = height
-	table.insert(self.segments, { model = model, startD = startD, endD = startD + Config.Run.SegmentLength, name = def.name, index = self.index })
-	self.lastUsed[def.name] = self.index
-	self.lastName = def.name
-	self.generatedUntil = startD + Config.Run.SegmentLength
+	local set = self.library[AreaData.List[self.areaIndex].id]
+	local template = self:_choose(set, self:_difficulty(startD))
+	if not template then
+		-- Everything's on cooldown (a tiny edited library): allow anything.
+		self.lastKindAt = {}
+		self.lastKind = ""
+		template = self:_choose(set, self:_difficulty(startD))
+	end
+	assert(template, "area has no sections")
+	self:_place(template, startD)
 end
 
--- Makes sure the track exists up to `targetD` (used before a cannon launch).
+-- The area of the section at track distance d (studs).
+function TrackGenerator.AreaAt(self: Track, d: number): string?
+	for _, record in self.segments do
+		if d >= record.startD and d < record.endD then
+			return record.area
+		end
+	end
+	return nil
+end
+
+-- Makes sure the track exists up to `targetD`.
 function TrackGenerator.EnsureAhead(self: Track, targetD: number)
 	local guard = 0
 	while self.generatedUntil < targetD and guard < 60 do

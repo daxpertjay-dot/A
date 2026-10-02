@@ -3,7 +3,9 @@
 --
 --   BASE → RUN PORTAL (walk in) → "RUN STARTING..." → villain intro
 --   → 3, 2, 1, RUN! → escape: coins, power-ups, rescue caged Brainrots
---   → caught → REVIVE or END → RESULTS (score, coins, rescues) → BASE
+--   → caught → REVIVE or END → RESULTS (score, coins, rescues, Brainrot XP) → BASE
+--
+-- Score multiplier = base (Brainrots) × ✖️2 booster × style combo × Hype.
 --
 -- Each run gets its own strip of world far from the lobby. The server is
 -- authoritative over the track, destruction, coins, power-ups, hoverboards,
@@ -15,16 +17,20 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AreaData = require(Shared.AreaData)
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local ImpactRules = require(Shared.ImpactRules)
+local MutationData = require(Shared.MutationData)
 local PowerUpData = require(Shared.PowerUpData)
+local Progression = require(Shared.Progression)
 local Remotes = require(Shared.Remotes)
 local Util = require(Shared.Util)
 
 local PlayerData = require(script.Parent.Parent.PlayerData)
 local Leaderboards = require(script.Parent.Parent.Leaderboards)
 local Destruction = require(script.Parent.Destruction)
+local TrackAreas = require(script.Parent.TrackAreas)
 local TrackGenerator = require(script.Parent.TrackGenerator)
 
 local RunManager = {}
@@ -40,7 +46,14 @@ type Run = {
 	phase: Phase,
 	d: number, -- server-tracked distance (studs)
 	score: number,
+	area: string, -- the area the runner is in (AreaData id)
 	baseMultiplier: number, -- from Brainrots on the base, fixed for the run
+	combo: Progression.Combo,
+	bestCombo: number,
+	coinStreak: number, -- coins towards the next combo stack
+	lastStyle: number, -- os.clock() of the last client-reported trick
+	hype: number, -- Hype charge left (spent as you run)
+	hypeStart: number,
 	coins: number,
 	-- Power-up timers (os.clock())
 	magnetUntil: number,
@@ -50,7 +63,7 @@ type Run = {
 	hoverUntil: number,
 	hoverboardsUsed: number,
 	revives: number,
-	rescued: { string },
+	rescued: { string }, -- keys: "Id" or "Id:Mutation"
 	boxRewards: { { kind: string, amount: number } },
 	caughtClock: number,
 	survival: number,
@@ -91,9 +104,22 @@ function RunManager.IsRunning(player: Player): boolean
 	return runs[player] ~= nil
 end
 
--- Current score multiplier: Brainrots on your base, doubled by the booster.
+-- Current score multiplier: Brainrots on your base × booster × combo × Hype.
 local function currentMultiplier(run: Run): number
-	return run.baseMultiplier * (if os.clock() < run.boosterUntil then 2 else 1)
+	local booster = if os.clock() < run.boosterUntil then 2 else 1
+	return run.baseMultiplier * booster * Progression.ComboMultiplier(run.combo) * Progression.HypeMultiplier(run.hype)
+end
+
+-- Adds a trick to the combo and tells the client (it mirrors the server's combo).
+local function comboAdd(run: Run, kind: string)
+	local gained = Progression.ComboAdd(run.combo, kind, os.clock())
+	run.bestCombo = math.max(run.bestCombo, Progression.ComboMultiplier(run.combo))
+	world(run.player, { type = "Combo", kind = kind, gained = gained, stacks = run.combo.stacks })
+end
+
+local function comboSet(run: Run, kind: string, stacks: number)
+	run.combo.stacks = stacks
+	world(run.player, { type = "Combo", kind = kind, gained = 0, stacks = stacks })
 end
 
 -- ───────────────────────────── start ─────────────────────────────
@@ -125,7 +151,14 @@ function RunManager.StartRun(player: Player)
 		phase = "Starting",
 		d = START_D,
 		score = 0,
+		area = AreaData.First.id,
 		baseMultiplier = PlayerData.Multiplier(profile),
+		combo = Progression.NewCombo(),
+		bestCombo = 1,
+		coinStreak = 0,
+		lastStyle = 0,
+		hype = 0,
+		hypeStart = 0,
 		coins = 0,
 		magnetUntil = 0,
 		jetpackUntil = 0,
@@ -143,17 +176,27 @@ function RunManager.StartRun(player: Player)
 	}
 	runs[player] = run
 	player:SetAttribute("InRun", true)
+	-- Hype charged up until now; it's spent during this run.
+	PlayerData.ChargeHype(profile, true)
+	run.hype = profile.Hype
+	run.hypeStart = profile.Hype
 
 	-- 1) "RUN STARTING..." fade on the client while the world is built.
 	Remotes.Event("RunStarting"):FireClient(player)
-	run.track = TrackGenerator.new(folder, origin, rng:NextInteger(1, 2 ^ 30))
+	-- The track switches area when the score would reach the next one by
+	-- the time you get there (at today's multiplier).
+	run.track = TrackGenerator.new(folder, origin, rng:NextInteger(1, 2 ^ 30), function(d: number): number
+		local meters = math.max(0, d - run.d) * Config.Run.MetersPerStud
+		return run.score + meters * Config.Score.PointsPerMeter * currentMultiplier(run)
+	end)
 
 	table.insert(run.connections, humanoid.Died:Connect(function()
 		RunManager.EndRun(player, "Died")
 	end))
 
 	task.delay(Config.Run.RunStartingFade, function()
-		if runs[player] ~= run or not player.Parent then
+		-- The run may already be over (e.g. the character died during the fade).
+		if runs[player] ~= run or run.ended or not player.Parent then
 			return
 		end
 		local startCf = CFrame.new(origin + Vector3.new(0, 3, -START_D))
@@ -176,6 +219,8 @@ function RunManager.StartRun(player: Player)
 			startD = START_D,
 			trackFolder = run.track.folder,
 			multiplier = run.baseMultiplier,
+			area = run.area,
+			hype = run.hype,
 			hoverboards = profile.Hoverboards,
 			highScore = profile.Stats.HighScore,
 			bankCoins = profile.Coins,
@@ -200,17 +245,27 @@ local function updateRun(run: Run, dt: number)
 		return
 	end
 	run.survival += dt
+	Progression.ComboDecay(run.combo, os.clock(), dt)
 	-- Cap progress by the fastest legal speed so teleporting ahead is useless.
 	local reported = run.origin.Z - root.Position.Z
 	local maxSpeed = ImpactRules.SpeedAt(run.d * Config.Run.MetersPerStud) * 1.6 * Config.Run.MaxSpeedTolerance
 	local allowed = run.d + maxSpeed * dt + 2
 	local newD = math.clamp(reported, run.d - 20, allowed)
-	-- Score: every meter forward is worth PointsPerMeter × multiplier.
+	-- Score: every meter forward is worth PointsPerMeter × multiplier; Hype is
+	-- spent as you go.
 	if newD > run.d then
-		run.score += (newD - run.d) * Config.Run.MetersPerStud * Config.Score.PointsPerMeter * currentMultiplier(run)
+		local meters = (newD - run.d) * Config.Run.MetersPerStud
+		run.score += meters * Config.Score.PointsPerMeter * currentMultiplier(run)
+		run.hype = math.max(0, run.hype - meters * Progression.HypeDrainPerMeter())
 	end
 	run.d = newD
 	run.track:Update(run.d)
+	-- Entered a new area: the client changes the sky and shows its banner.
+	local area = run.track:AreaAt(run.d)
+	if area and area ~= run.area then
+		run.area = area
+		world(run.player, { type = "Area", id = area })
+	end
 end
 
 -- ───────────────────────────── client reports ─────────────────────────────
@@ -243,7 +298,7 @@ end
 
 local function onReportHit(player: Player, object: any, info: any)
 	local run = runs[player]
-	if not run or run.phase ~= "Running" or not validObject(run, object) or type(info) ~= "table" or info.side then
+	if not run or run.phase ~= "Running" or not validObject(run, object) or type(info) ~= "table" then
 		return
 	end
 	local obstacle = object :: Instance
@@ -251,8 +306,13 @@ local function onReportHit(player: Player, object: any, info: any)
 		return
 	end
 	local position = objectPosition(obstacle)
-	-- Long objects (train cars) have far-away centres; allow generous slack.
+	-- Long objects (buses, vault walls) have far-away centres; allow generous slack.
 	if not position or not nearRunner(run, position, 40) then
+		return
+	end
+	if info.side then
+		-- Clipped something while changing lanes: the combo is halved.
+		comboSet(run, "Side", run.combo.stacks / 2)
 		return
 	end
 
@@ -268,6 +328,10 @@ local function onReportHit(player: Player, object: any, info: any)
 	if result.outcome == "Absorbed" then
 		run.hoverUntil = 0
 		world(player, { type = "HoverboardBroken" })
+	elseif result.outcome == "Smash" or result.outcome == "CrashThrough" then
+		comboAdd(run, result.outcome)
+	elseif result.outcome == "Bump" then
+		comboSet(run, "Crash", 0)
 	end
 	local impact = if typeof(info.point) == "Vector3" then info.point else position
 	Destruction.ApplyDamage(obstacle, result.damage, impact, player, speed)
@@ -290,6 +354,51 @@ local function onCollectCoin(player: Player, coin: any)
 	local value = part:GetAttribute("Value") or Config.Economy.CoinValue
 	part:Destroy()
 	run.coins += value
+	run.coinStreak += value
+	if run.coinStreak >= Config.Combo.CoinsPerStack and run.phase == "Running" then
+		run.coinStreak -= Config.Combo.CoinsPerStack
+		comboAdd(run, "Coins")
+	end
+end
+
+-- Tricks the client spots (clearing obstacles, near misses, landing on a
+-- roof). Each object can only count once and has to be where the runner is.
+local CLIENT_TRICKS = { Clear = true, NearMiss = true, Roof = true }
+local function onReportStyle(player: Player, kind: any, object: any)
+	local run = runs[player]
+	if not run or run.phase ~= "Running" or type(kind) ~= "string" or not CLIENT_TRICKS[kind] or not validObject(run, object) then
+		return
+	end
+	local now = os.clock()
+	if now - run.lastStyle < 0.12 or now < run.jetpackUntil then
+		return
+	end
+	local target = object :: Instance
+	if target:GetAttribute("Styled") or target:GetAttribute("NoStyle") or target:GetAttribute("Destroyed") then
+		return
+	end
+	local root = rootOf(player)
+	if not root then
+		return
+	end
+	if kind == "Roof" then
+		if not target:IsA("BasePart") or target.CollisionGroup ~= "RunGround" then
+			return
+		end
+		local top = target.Position.Y + target.Size.Y / 2 - run.origin.Y
+		local high = Config.Run.HighGround
+		if top < high or root.Position.Y - run.origin.Y < high or not nearRunner(run, target.Position, 60) then
+			return
+		end
+	else
+		local trackD = target:GetAttribute("TrackD")
+		if not target:GetAttribute("ObstacleType") or type(trackD) ~= "number" or trackD < run.d - 40 or trackD > run.d + 15 then
+			return
+		end
+	end
+	target:SetAttribute("Styled", true)
+	run.lastStyle = now
+	comboAdd(run, kind)
 end
 
 local function rollMysteryBox(): { kind: string, amount: number }
@@ -357,6 +466,7 @@ local function onPickupItem(player: Player, pickupPart: any)
 	end
 	-- Read everything we need before the part is destroyed.
 	local brainrotId = part:GetAttribute("BrainrotId")
+	local mutationId = part:GetAttribute("Mutation")
 	local powerUpId = part:GetAttribute("PowerUpId")
 	part:Destroy()
 
@@ -364,8 +474,17 @@ local function onPickupItem(player: Player, pickupPart: any)
 	if kind == "Brainrot" then
 		local data = BrainrotData.Get(if type(brainrotId) == "string" then brainrotId else nil)
 		if data then
-			table.insert(run.rescued, data.id)
-			world(player, { type = "BrainrotRescued", id = data.id, name = data.name, icon = data.icon, rarity = data.rarity, bonus = data.bonus })
+			-- The mutation was rolled (server side) when the cage was built.
+			local mutation = MutationData.Get(if type(mutationId) == "string" then mutationId else nil)
+			local key = MutationData.Key(data.id, mutation and mutation.id)
+			table.insert(run.rescued, key)
+			world(player, { type = "BrainrotRescued", id = data.id, label = MutationData.Label(key), rarity = data.rarity, mutation = mutation and mutation.id })
+			comboAdd(run, "Rescue")
+			-- Rare rescues are announced to everyone in the server.
+			if (mutation and mutation.announce) or Config.Mutations.AnnounceRarities[data.rarity] then
+				local color = if mutation then mutation.color else BrainrotData.RarityColors[data.rarity]
+				Remotes.Event("Announce"):FireAllClients(("🔓 %s rescued a %s! (%s)"):format(player.DisplayName, MutationData.Label(key), string.upper(data.rarity)), color)
+			end
 		end
 	elseif kind == "PowerUp" then
 		local powerUp = PowerUpData.Get(if type(powerUpId) == "string" then powerUpId else nil)
@@ -384,10 +503,12 @@ local function onPickupItem(player: Player, pickupPart: any)
 			run.boosterUntil = now + duration
 		end
 		world(player, { type = "PowerUp", id = powerUp.id, duration = duration })
+		comboAdd(run, "PowerUp")
 	elseif kind == "MysteryBox" then
 		local reward = rollMysteryBox()
 		table.insert(run.boxRewards, reward)
 		world(player, { type = "MysteryBox", kind = reward.kind, amount = reward.amount })
+		comboAdd(run, "MysteryBox")
 	end
 end
 
@@ -409,6 +530,29 @@ end
 
 -- ───────────────────────────── caught / revive / end ─────────────────────────────
 
+-- Revive shockwave: every obstacle near the runner is blown away, so you
+-- never come back to life staring at a bus.
+local function clearAround(run: Run): number
+	local from = run.d - Config.Economy.ReviveClearBehind
+	local to = run.d + Config.Economy.ReviveClearAhead
+	local root = rootOf(run.player)
+	local center = if root then root.Position else run.origin + Vector3.new(0, 3, -run.d)
+	local targets = {}
+	for _, d in run.track.folder:GetDescendants() do
+		local trackD = d:GetAttribute("TrackD")
+		if type(trackD) == "number" and trackD >= from and trackD <= to and d:GetAttribute("ObstacleType") and not d:GetAttribute("Destroyed") then
+			table.insert(targets, d)
+		end
+	end
+	local cleared = 0
+	for _, obstacle in targets do
+		if Destruction.Obliterate(obstacle, center, run.player, 140) then
+			cleared += 1
+		end
+	end
+	return cleared
+end
+
 local function reviveCost(run: Run): number
 	return Config.Economy.ReviveBaseCost * 2 ^ run.revives
 end
@@ -420,6 +564,7 @@ local function onReportCaught(player: Player)
 	end
 	run.phase = "Caught"
 	run.caughtClock = os.clock()
+	run.combo.stacks = 0
 	local profile = PlayerData.Get(player)
 	Remotes.Event("RunCaught"):FireClient(player, {
 		canRevive = run.revives < Config.Economy.MaxRevivesPerRun,
@@ -453,7 +598,8 @@ function RunManager.Revive(player: Player, paidWithRobux: boolean?): boolean
 	end
 	run.revives += 1
 	run.phase = "Running"
-	Remotes.Event("RunRevived"):FireClient(player)
+	local cleared = clearAround(run)
+	Remotes.Event("RunRevived"):FireClient(player, { cleared = cleared, at = run.d })
 	return true
 end
 
@@ -481,6 +627,8 @@ local function cleanup(run: Run)
 	slotsInUse[run.slot] = nil
 end
 
+-- Always gets the player back to their base with a fresh character, from any
+-- state (results screen, a broken run, a run the server already cleaned up).
 function RunManager.ReturnToLobby(player: Player)
 	local run = runs[player]
 	if run then
@@ -489,7 +637,12 @@ function RunManager.ReturnToLobby(player: Player)
 	end
 	player:SetAttribute("InRun", false)
 	if player.Parent then
-		player:LoadCharacter()
+		local ok, err = pcall(function()
+			player:LoadCharacter()
+		end)
+		if not ok then
+			warn("[RunManager] LoadCharacter failed:", err)
+		end
 		Remotes.Event("ReturnedToLobby"):FireClient(player)
 	end
 end
@@ -517,6 +670,7 @@ function RunManager.EndRun(player: Player, reason: string)
 	local totalCoins = run.coins + boxCoins
 	local newHighScore = false
 	local rescued = {}
+	local levelUps = {}
 	local oldMultiplier = run.baseMultiplier
 	local newMultiplier = oldMultiplier
 
@@ -533,11 +687,27 @@ function RunManager.EndRun(player: Player, reason: string)
 		end
 		profile.Coins += totalCoins
 		profile.Hoverboards += boxBoards
+		-- Hype left over stays for next time; it starts charging again now.
+		profile.Hype = run.hype
+		profile.HypeUpdated = os.time()
+		-- The score is XP for every Brainrot that was on the base this run.
+		for _, up in PlayerData.AwardBrainrotXP(profile, score) do
+			local data = BrainrotData.Get(up.id) :: BrainrotData.Brainrot
+			table.insert(levelUps, { name = data.name, icon = data.icon, from = up.from, to = up.to, bonus = up.bonus })
+		end
 		-- Rescued Brainrots go straight to your base (kept even if you're caught).
-		for _, id in run.rescued do
+		for _, key in run.rescued do
+			local id, mutation = MutationData.Split(key)
 			local data = BrainrotData.Get(id) :: BrainrotData.Brainrot
-			table.insert(rescued, { id = id, name = data.name, icon = data.icon, bonus = data.bonus, isNew = not profile.Collection[id] })
-			profile.Brainrots[id] = (profile.Brainrots[id] or 0) + 1
+			table.insert(rescued, {
+				id = id,
+				mutation = mutation,
+				label = MutationData.Label(key),
+				icon = data.icon,
+				bonus = PlayerData.BrainrotBonus(profile, key),
+				isNew = (profile.Brainrots[key] or 0) == 0, -- first of this kind/variant
+			})
+			profile.Brainrots[key] = (profile.Brainrots[key] or 0) + 1
 			profile.Collection[id] = true
 			stats.BrainrotsRescued += 1
 		end
@@ -560,6 +730,11 @@ function RunManager.EndRun(player: Player, reason: string)
 		distance = meters,
 		multiplier = oldMultiplier,
 		newMultiplier = newMultiplier,
+		bestCombo = run.bestCombo,
+		hypeStart = run.hypeStart,
+		hypeLeft = run.hype,
+		xp = if profile then score else 0,
+		levelUps = levelUps,
 		coins = run.coins,
 		boxCoins = boxCoins,
 		boxBoards = boxBoards,
@@ -582,6 +757,9 @@ end
 
 function RunManager.Init()
 	TrackGenerator.RegisterCollisionGroups()
+	-- Load the track sections now (moving them out of Workspace), not when
+	-- the first run starts.
+	TrackAreas.Load()
 
 	runsFolder = Instance.new("Folder")
 	runsFolder.Name = "Runs"
@@ -590,14 +768,27 @@ function RunManager.Init()
 	Remotes.Event("ReportHit").OnServerEvent:Connect(onReportHit)
 	Remotes.Event("CollectCoin").OnServerEvent:Connect(onCollectCoin)
 	Remotes.Event("PickupItem").OnServerEvent:Connect(onPickupItem)
+	Remotes.Event("ReportStyle").OnServerEvent:Connect(onReportStyle)
 	Remotes.Event("UseHoverboard").OnServerEvent:Connect(onUseHoverboard)
 	Remotes.Event("ReportCaught").OnServerEvent:Connect(onReportCaught)
 	Remotes.Event("ChooseRevive").OnServerEvent:Connect(onChooseRevive)
+	-- "BACK TO BASE" on the results screen. Also the client's way out of a run
+	-- it can't continue: an unfinished run is settled first (like being caught).
+	local lastLeave: { [Player]: number } = {}
 	Remotes.Event("LeaveResults").OnServerEvent:Connect(function(player)
-		local run = runs[player]
-		if run and run.phase == "Results" then
-			RunManager.ReturnToLobby(player)
+		local now = os.clock()
+		if (lastLeave[player] or 0) > now then
+			return
 		end
+		lastLeave[player] = now + 2
+		local run = runs[player]
+		if run and not run.ended then
+			RunManager.EndRun(player, "Left")
+		end
+		RunManager.ReturnToLobby(player)
+	end)
+	Players.PlayerRemoving:Connect(function(player)
+		lastLeave[player] = nil
 	end)
 
 	-- Walk into a run portal to start. Plot portals only work for their owner.

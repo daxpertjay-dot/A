@@ -9,9 +9,10 @@ local EVENTS = {
 	-- server → client
 	"DataUpdated", -- (snapshot) full profile snapshot for UI
 	"Notify", -- (text, color?) toast message
+	"Announce", -- (text, color?) to everyone in the server: rare rescues
 	"RunStarting", -- () fade to "RUN STARTING..."
 	"RunPrepare", -- (runInfo) sets up the client run controller
-	"RunWorld", -- (event) power-ups, mystery boxes, rescues, hoverboard
+	"RunWorld", -- (event) power-ups, mystery boxes, rescues, hoverboard, combo
 	"RunDebris", -- (pieces) client-side debris to simulate
 	"RunCaught", -- (reviveInfo) the player was caught; offer revive
 	"RunRevived", -- () continue running
@@ -22,11 +23,12 @@ local EVENTS = {
 	"ReportHit", -- (object, impactInfo)
 	"CollectCoin", -- (coinPart)
 	"PickupItem", -- (pickupPart) power-up, mystery box or caged Brainrot
+	"ReportStyle", -- (kind, object) a trick for the combo: "Clear" | "NearMiss" | "Roof"
 	"UseHoverboard", -- ()
 	"ReportCaught", -- ()
 	"ChooseRevive", -- ("Coins" | "Robux" | false)
 	"LeaveResults", -- () back to the lobby from the rewards screen
-	"GoToBase", -- () teleport to your own plot
+	"GoToBase", -- ("Respawn"?) teleport to your own plot (respawning if there's no usable character)
 }
 
 local FUNCTIONS = {

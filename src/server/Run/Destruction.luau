@@ -200,6 +200,19 @@ function Destruction.ApplyDamage(object: Instance, amount: number, impact: Vecto
 	return false
 end
 
+-- Destroys an object outright, whatever its tier (the revive shockwave).
+function Destruction.Obliterate(object: Instance, impact: Vector3, owner: Player?, force: number?): boolean
+	if object:GetAttribute("Destroyed") then
+		return false
+	end
+	-- Indestructible things have infinite health (and ∞ - ∞ isn't 0), so
+	-- make it breakable first.
+	object:SetAttribute("Tier", 1)
+	object:SetAttribute("MaxHealth", 1)
+	object:SetAttribute("Health", 1)
+	return Destruction.ApplyDamage(object, math.huge, impact, owner, force or 120)
+end
+
 -- Destroys every destructible within `radius` of `center` whose tier is at
 -- or below `maxTier`; stronger objects only take resisted damage.
 function Destruction.Explode(root: Instance, center: Vector3, radius: number, maxTier: number, owner: Player?): number

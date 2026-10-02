@@ -4,8 +4,9 @@
 -- tuned without touching gameplay code.
 --
 -- The game in one line: escape the villain, grab coins and power-ups,
--- rescue caged Brainrots. Brainrots on your base raise your SCORE MULTIPLIER;
--- coins buy upgrades.
+-- rescue caged Brainrots. Brainrots on your base raise your SCORE MULTIPLIER
+-- (and level up from your score), style builds a combo, your base charges
+-- Hype while you're away; coins buy upgrades.
 
 local Config = {}
 
@@ -26,14 +27,62 @@ Config.Villain = {
 -- ───────────────────────────── LOBBY ─────────────────────────────
 Config.Lobby = {
 	Origin = Vector3.new(0, 0, 0),
-	PlotsPerSide = 4,
-	PlotWidth = 64, -- along the street (Z)
-	PlotDepth = 84, -- away from the street (X)
-	PlotGap = 10,
-	StreetHalfWidth = 34, -- plots start this far from the centre line
+	-- A big green valley closed in by terraced, checkered cliffs.
+	ValleyHalfSize = 340, -- centre to the foot of the cliffs (studs)
+	CliffRings = 4, -- terraces, each one higher than the last
+	CliffStep = 40, -- width of one terrace (also the ground tile size)
+	PlazaHalfSize = 70, -- the SAFE ZONE in the middle (spawn, shops)
+	RingRoadHalfSize = 160, -- the conveyor ring road around the plaza
+	-- 8 player bases around the ring road: 3 north, 3 south, 1 west, 1 east.
+	PlotWidth = 80,
+	PlotDepth = 100,
 	ConveyorSpeed = 30, -- studs/sec
 	ConveyorWidth = 8,
-	UseStuds = true, -- classic stud / inlet surfaces on lobby parts
+	UseStuds = true, -- blocky stud look on lobby parts
+	-- Square stud texture on every face (the Steal a Brainrot / Grow a Garden
+	-- look). Upload assets/StudTexture.png in Studio (Asset Manager → Import,
+	-- or the Toolbox) and paste its id here, e.g. "rbxassetid://1234567890".
+	-- Empty = Roblox's classic round studs on top faces instead.
+	StudTexture = "",
+	StudTextureSize = 2, -- studs per square
+	StudTextureMinFace = 1, -- faces thinner than this (studs) stay plain
+	-- Black outline along the edges of every lobby part (cartoon look), drawn
+	-- on each player's side. The ground tiles are left out so the field
+	-- doesn't turn into a grid. Mark a part or model NoOutline to skip it.
+	-- Off: SelectionBox edges draw over far-away parts and double up where
+	-- parts touch. The Blender props (tools/blender) have real outlines.
+	Outlines = false,
+	OutlineThickness = 0.05, -- studs
+	OutlineColor = Color3.fromRGB(0, 0, 0),
+	-- Your own decoration models (e.g. the Blender props in assets/models).
+	-- Put Models in a folder with this name in ServerStorage, named after a
+	-- prop kind below ("Tree", or "Tree_2" etc. for variants). At startup
+	-- they replace the built-in blocky ones in the lobby map, at the same
+	-- spot and size; each is set on the ground, turned randomly and anchored.
+	PropsFolder = "LobbyProps",
+	PropKinds = { "Tree", "PineTree", "Bush", "Rock", "Flowers", "Lamp" },
+	-- Height (studs) of each built-in prop: your models are sized to match
+	-- when they come in far too big or small.
+	PropHeights = { Tree = 20, PineTree = 20, Bush = 3.5, Rock = 2.4, Flowers = 2, Lamp = 14 } :: { [string]: number },
+	-- Colours for imported prop meshes, by mesh name (tools/blender/props.py).
+	PropColors = {
+		Trunk = Color3.fromRGB(124, 84, 52),
+		Leaves = Color3.fromRGB(76, 170, 60),
+		LeavesLight = Color3.fromRGB(118, 204, 82),
+		Pine = Color3.fromRGB(40, 120, 70),
+		PineLight = Color3.fromRGB(60, 150, 84),
+		Rock = Color3.fromRGB(146, 146, 160),
+		RockDark = Color3.fromRGB(110, 110, 124),
+		Stem = Color3.fromRGB(70, 150, 60),
+		PetalRed = Color3.fromRGB(240, 70, 80),
+		PetalYellow = Color3.fromRGB(255, 210, 60),
+		PetalPink = Color3.fromRGB(250, 130, 200),
+		PetalBlue = Color3.fromRGB(90, 150, 255),
+		FlowerCenter = Color3.fromRGB(255, 236, 120),
+		Metal = Color3.fromRGB(52, 52, 64),
+		Bulb = Color3.fromRGB(255, 240, 170),
+		Outline = Color3.fromRGB(0, 0, 0),
+	} :: { [string]: Color3 },
 }
 
 -- ───────────────────────────── SCORE ─────────────────────────────
@@ -49,6 +98,65 @@ Config.Score = {
 	PedestalCosts = { 750, 1500, 3000, 5000, 8000, 12000, 20000 }, -- cost of pedestal #4, #5, ...
 }
 
+-- ───────────────────────────── BRAINROT LEVELS ─────────────────────────────
+-- After every run, each Brainrot on your base gains XP equal to the run's
+-- score. Each level adds BonusPerLevel × its base bonus to the multiplier
+-- (a +2x Brainrot is +2.5x at Lv 2, +3x at Lv 3 … +6.5x at Lv 10).
+Config.Levels = {
+	MaxLevel = 10,
+	XPBase = 2500, -- XP from Lv 1 to Lv 2
+	XPGrowth = 2.2, -- each level needs this much more than the last (Lv 10 ≈ 2.5M total)
+	BonusPerLevel = 0.25,
+}
+
+-- ───────────────────────────── MUTATIONS ─────────────────────────────
+-- Rare Brainrot variants (Gold x2, Diamond x3, Rainbow x5, Galaxy x10); see
+-- MutationData for the chances. Luck multiplies every chance (for events or
+-- a "server luck" boost later).
+Config.Mutations = {
+	Luck = 1,
+	-- Rescues announced to the whole server: any mutation marked `announce`
+	-- in MutationData, plus every Brainrot of these rarities.
+	AnnounceRarities = { Legendary = true } :: { [string]: boolean },
+}
+
+-- ───────────────────────────── STYLE COMBO ─────────────────────────────
+-- Playing well during a run builds a combo that multiplies your multiplier.
+-- It drains if you play it safe and resets when you crash.
+Config.Combo = {
+	PerStack = 0.1, -- multiplier per stack (20 stacks = x3)
+	MaxStacks = 20,
+	Grace = 2.5, -- seconds after a trick before the combo starts draining
+	DecayPerSecond = 2.5, -- stacks lost per second once draining
+	CoinsPerStack = 15, -- every this many coins in a row = +1
+	NearMissWindow = 0.5, -- dodge within this many seconds of reaching it
+	Points = {
+		Clear = 1, -- jumped over / rolled under something
+		NearMiss = 2, -- last-second lane dodge
+		Roof = 2, -- landed on a wagon / greenhouse roof
+		Smash = 1,
+		CrashThrough = 2,
+		Coins = 1,
+		PowerUp = 1,
+		MysteryBox = 1,
+		Rescue = 3,
+	} :: { [string]: number },
+}
+
+-- ───────────────────────────── HYPE ─────────────────────────────
+-- The Brainrots on your base charge up Hype while you're offline or hanging
+-- out in the lobby. Hype boosts the start of your next run and is spent as
+-- you run (a full charge lasts MetersAtFull meters).
+Config.Hype = {
+	MaxBonus = 1.5, -- full Hype = x2.5 on top of your multiplier
+	MetersAtFull = 1000,
+	OfflineHoursToFull = 8,
+	LobbyHoursToFull = 4, -- charges twice as fast while you're in the server
+	SpeedupPerMultiplier = 0.05, -- better bases charge faster…
+	MaxSpeedup = 3, -- …up to 3x as fast
+	StartingHype = 1, -- new players start fully hyped
+}
+
 -- ───────────────────────────── COINS ─────────────────────────────
 -- Every coin is worth 1 (like Subway Surfers). A normal run gives a few
 -- hundred; Mystery Boxes and the Jetpack's sky trail are the big moments.
@@ -58,6 +166,10 @@ Config.Economy = {
 	CoinValue = 1,
 	ReviveBaseCost = 200, -- doubles every revive in the same run
 	MaxRevivesPerRun = 3,
+	-- Reviving sends out a shockwave that destroys every structure (buses,
+	-- walls, barriers…) from this far behind you to this far ahead (studs).
+	ReviveClearBehind = 45,
+	ReviveClearAhead = 110,
 	HoverboardCost = 300,
 	StartingHoverboards = 2,
 	MysteryBox = {
@@ -91,9 +203,11 @@ Config.Run = {
 	},
 	MetersPerStud = 1,
 
-	-- Jump / roll
+	-- Jump / roll. A normal jump peaks at ~9 studs: enough for barriers, not
+	-- for wagons (12.5) or tunnel roofs (16) — those need a jump boost.
 	Gravity = 150,
 	JumpVelocity = 52,
+	HighGround = 9, -- anything you stand on this high counts as a "roof"
 	FastFallVelocity = -110, -- pressing roll mid-air slams you down (Subway Surfers style)
 	RollDuration = 0.7,
 	JumpBuffer = 0.18, -- a jump pressed this long before landing still fires on landing
@@ -122,16 +236,30 @@ Config.Run = {
 	PickupTolerance = 18,
 }
 
+-- ───────────────────────────── RUN AREAS ─────────────────────────────
+-- The track changes area as your score climbs (see AreaData). Each area is
+-- built from section templates: Workspace.TrackAreas.<Area> in the place
+-- file (edit them in Studio), or built from code when that's missing.
+Config.Areas = {
+	EditOrigin = Vector3.new(-9000, 0, 0), -- where the templates sit in Workspace
+	AreaSpacing = 2400, -- studs between areas' template grids (along -Z)
+	DifficultyStep = 900, -- meters per difficulty step (easy → medium → hard)
+	RecentTemplates = 3, -- a template never repeats within this many sections
+}
+
 -- ───────────────────────────── POWER-UPS ─────────────────────────────
 -- Picked up on the track (Subway Surfers style). Upgrading one with coins
 -- makes it last longer. See PowerUpData for the list.
 Config.PowerUps = {
-	SpawnChancePerSegment = 0.45,
+	SpawnChancePerSegment = 0.15, -- a random power-up at the start of a segment
+	MysteryBoxChancePerSegment = 0.06, -- otherwise, a mystery box
+	BoostBeforeTallChance = 0.2, -- 👟 sneakers placed just before wagons / tunnels
 	MagnetRadius = 26,
-	JetpackHeight = 32, -- studs above the run's base level while flying (roofs go up to 12)
+	JetpackHeight = 32, -- studs above the street while flying (tunnel roofs are 16)
 	JetpackSpeedMultiplier = 1.25,
 	JetpackLandingInvulnerability = 1.5,
-	SneakersJumpMultiplier = 1.45, -- jump velocity with Super Sneakers
+	SneakersJumpMultiplier = 1.45, -- jump velocity with Super Sneakers (reach ~19 studs)
+	HoverboardJumpMultiplier = 1.4, -- riding a hoverboard also boosts jumps (~17.7 studs)
 	HoverboardDuration = 30,
 	HoverboardInvulnerability = 1.5, -- after the board breaks
 }
@@ -151,9 +279,11 @@ Config.Chase = {
 		SmallBreak = 0.8, -- tier 1 object smashed
 		CrashThrough = 1.5, -- tier 2 wall broken with momentum
 		Bump = 2.5, -- stopped by a wall you could not break
-		SideBump = 1.2, -- clipped something while changing lanes
+		SideBump = 2, -- switched lanes into the side of something
 	},
 	SlowdownOnSmallBreak = 0.85, -- speed multiplier (recovers)
+	SideBumpSpeed = 0.6, -- bouncing off the side of something drops you to this much speed (recovers)
+	SideBumpStumble = 0.35, -- seconds of sideways wobble after a side bump
 	StaggerTime = 0.55,
 	BumpPushback = 5,
 	SpeedRecoveryPerSecond = 0.9,
@@ -208,6 +338,9 @@ Config.Animations = {
 	-- Optional jetpack flight animation id. Leave "" to use the built-in
 	-- Superman pose (one fist forward, legs trailing, jetpack flames).
 	Fly = "",
+	-- Optional hoverboard animation id. Leave "" to use the built-in surf
+	-- stance (turned sideways, knees bent, arms out).
+	Hoverboard = "",
 }
 
 -- Robux developer products. Leave at 0 until you create them on the Creator

@@ -4,3 +4,9 @@
 *.rbxlx.lock
 sourcemap.json
 /build
+
+# Headless test mirror + logs
+tests/.mirror
+
+# Python bytecode
+__pycache__/
