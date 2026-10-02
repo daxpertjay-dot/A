@@ -196,6 +196,19 @@ local function propTemplates(kind: string): { Model }
 	return found
 end
 
+-- The colour key in an imported mesh's name: Blender and the importer add
+-- prefixes and suffixes ("Tree_2_Leaves", "Leaves.001"), so it's the last
+-- piece of the name that is a key in Config.Lobby.PropColors.
+local function colorKey(name: string): string?
+	local pieces = string.split((name:gsub("%.", "_")), "_")
+	for i = #pieces, 1, -1 do
+		if L.PropColors[pieces[i]] then
+			return pieces[i]
+		end
+	end
+	return nil
+end
+
 -- Imported meshes (tools/blender/props.py) are named after their colour:
 -- paint them from Config.Lobby.PropColors. "Outline" is the black toon
 -- shell, "Bulb" a lamp's light.
@@ -203,16 +216,16 @@ local function finishProp(model: Model)
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.Anchored = true
-			local color = L.PropColors[d.Name]
-			if color then
-				d.Color = color
+			local key = colorKey(d.Name)
+			if key then
+				d.Color = L.PropColors[key]
 			end
-			if d.Name == "Outline" then
+			if key == "Outline" then
 				d.CanCollide = false
 				d.CanQuery = false
 				d.CanTouch = false
 				d.CastShadow = false
-			elseif d.Name == "Bulb" then
+			elseif key == "Bulb" then
 				d.Material = Enum.Material.Neon
 				if not d:FindFirstChildWhichIsA("Light") then
 					local light = Instance.new("PointLight")

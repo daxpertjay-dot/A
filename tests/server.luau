@@ -56,11 +56,12 @@ map.Parent = H.workspace
 -- too big): it replaces every blocky tree in the map, sized to match.
 local props = roblox.Instance.new("Folder"); props.Name = "LobbyProps"
 local meshTree = roblox.Instance.new("Model"); meshTree.Name = "Tree"; meshTree.Parent = props
-for _, spec in { { "Trunk", 200, 1100 }, { "Leaves", 1000, 800 }, { "Outline", 1040, 1940 } } do
+-- (named the way Blender exports them: prefixes and ".001" suffixes)
+for _, spec in { { "Tree_Trunk", 200, 1100 }, { "Tree_Leaves.001", 1000, 800 }, { "Tree_Outline", 1040, 1940 } } do
 	local p = roblox.Instance.new("Part"); p.Name = spec[1]; p.Size = Vector3.new(spec[2], spec[3], spec[2])
 	p.CFrame = CFrame.new(0, spec[3] / 2, 0); p.Parent = meshTree
 end
-meshTree.PrimaryPart = meshTree.Trunk
+meshTree.PrimaryPart = meshTree.Tree_Trunk
 local blockyTrees = 0
 for _, d in map:GetDescendants() do if d:IsA("Model") and d.Name == "Tree" then blockyTrees += 1 end end
 H.services.ServerStorage.FindFirstChild = function(_, name) return if name == "LobbyProps" then props else nil end
@@ -74,8 +75,9 @@ for _, d in map:GetDescendants() do
 		swapped += 1
 		local _, size = d:GetBoundingBox()
 		if size.Y < 15 or size.Y > 40 then wrongSize += 1 end
-		assert(d.Outline.CanCollide == false and d.Outline.Color == roblox.Color3.new(0, 0, 0), "outline shell set up")
-		assert(d.Leaves.Color == H.require(H.shared.Config).Lobby.PropColors.Leaves, "meshes painted by name")
+		local outline, leaves = d:FindFirstChild("Tree_Outline"), d:FindFirstChild("Tree_Leaves.001")
+		assert(outline.CanCollide == false and outline.Color == roblox.Color3.new(0, 0, 0), "outline shell set up")
+		assert(leaves.Color == H.require(H.shared.Config).Lobby.PropColors.Leaves, "meshes painted by the colour in their name")
 	end
 end
 print("swapped trees", swapped, "of", blockyTrees, "wrong size", wrongSize)

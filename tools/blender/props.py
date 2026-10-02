@@ -4,9 +4,10 @@ and exports them for Roblox Studio's 3D Importer.
     python3.11 -m pip install bpy        # Blender as a Python module (once)
     python3.11 tools/blender/props.py    # → assets/models/*.fbx (+ previews)
 
-Every prop is a few meshes, one per colour, named after the colour key the
-game paints them with (Config.Lobby.PropColors: Trunk, Leaves, Rock, …),
-plus "Outline": a slightly bigger black shell with its faces turned inside
+Every prop is a few meshes, one per colour, named after the prop and the
+colour key ("Tree_2_Leaves"; Config.Lobby.PropColors: Trunk, Leaves, Rock,
+…). Their colours come from a small palette texture embedded in the FBX,
+and the game also paints them by that key. Plus "<prop>_Outline": a slightly bigger black shell with its faces turned inside
 out (the "inverted hull" toon outline). Roblox only draws the side of a
 face that points at the camera, so the shell only shows around the edges,
 hides behind things like any other geometry, and never doubles up where
@@ -88,14 +89,57 @@ class Prop:
             else:
                 for centre, size, rot in boxes:
                     bmesh.ops.create_cube(bm, size=1.0, matrix=self._matrix(centre, size, rot))
+            # Every face samples its colour's cell of the palette texture.
+            uv = bm.loops.layers.uv.new("UVMap")
+            cell = palette_uv(color)
+            for face in bm.faces:
+                for loop in face.loops:
+                    loop[uv].uv = cell
             mesh = bpy.data.meshes.new(f"{self.name}_{color}")
             bm.to_mesh(mesh)
             bm.free()
-            obj = bpy.data.objects.new(color, mesh)
+            # Unique names (Blender would add ".001"); the game reads the
+            # colour key from the end: "Tree_2_Leaves" → Leaves.
+            obj = bpy.data.objects.new(f"{self.name}_{color}", mesh)
             obj.data.materials.append(material(color))
             obj.parent = root
             collection.objects.link(obj)
         return root
+
+
+# One small texture holds every colour (a cell each). The FBX embeds it, so
+# the props come into Studio already coloured.
+PALETTE_KEYS = list(COLORS)
+CELL = 8
+GRID = math.ceil(math.sqrt(len(PALETTE_KEYS)))
+_palette = None
+
+
+def palette_uv(color):
+    i = PALETTE_KEYS.index(color)
+    return ((i % GRID + 0.5) / GRID, 1 - (i // GRID + 0.5) / GRID)
+
+
+def palette_image():
+    global _palette
+    if _palette:
+        return _palette
+    size = GRID * CELL
+    img = bpy.data.images.new("palette", size, size, alpha=False)
+    pixels = [0.0] * (size * size * 4)
+    for i, key in enumerate(PALETTE_KEYS):
+        cx, cy = i % GRID, GRID - 1 - i // GRID  # image rows start at the bottom
+        r, g, b = (c / 255 for c in COLORS[key])
+        for y in range(cy * CELL, (cy + 1) * CELL):
+            for x in range(cx * CELL, (cx + 1) * CELL):
+                o = (y * size + x) * 4
+                pixels[o : o + 4] = (r, g, b, 1)
+    img.pixels = pixels
+    img.filepath_raw = os.path.join(OUT, "palette.png")
+    img.file_format = "PNG"
+    img.save()
+    _palette = img
+    return img
 
 
 _materials = {}
@@ -108,40 +152,50 @@ def material(color):
     mat.use_nodes = True
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
     bsdf = nodes["Principled BSDF"]
+    bsdf.inputs["Roughness"].default_value = 0.8
     r, g, b = (c / 255 for c in COLORS[color])
     lin = tuple(c ** 2.2 for c in (r, g, b))
-    bsdf.inputs["Base Color"].default_value = (*lin, 1)
-    bsdf.inputs["Roughness"].default_value = 0.8
+    if color in PALETTE_KEYS:
+        tex = nodes.new("ShaderNodeTexImage")
+        tex.image = palette_image()
+        tex.interpolation = "Closest"
+        links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    else:
+        bsdf.inputs["Base Color"].default_value = (*lin, 1)
     if color == "Bulb":
         bsdf.inputs["Emission Color"].default_value = (*lin, 1)
         bsdf.inputs["Emission Strength"].default_value = 3
-    if color == "Outline":
-        # Cycles has no backface culling: like Roblox, draw only the faces
-        # pointing at the camera. The shell's faces point inward, so only its
-        # far side shows, around the prop's edges.
-        out = nodes["Material Output"]
-        geo = nodes.new("ShaderNodeNewGeometry")
-        transparent = nodes.new("ShaderNodeBsdfTransparent")
-        black = nodes.new("ShaderNodeEmission")
-        black.inputs["Color"].default_value = (0, 0, 0, 1)
-        # …and only to the camera: lit from inside the shell, the prop would
-        # otherwise sit in its shadow.
-        path = nodes.new("ShaderNodeLightPath")
-        not_camera = nodes.new("ShaderNodeMath")
-        not_camera.operation = "SUBTRACT"
-        not_camera.inputs[0].default_value = 1
-        links.new(path.outputs["Is Camera Ray"], not_camera.inputs[1])
-        hide = nodes.new("ShaderNodeMath")
-        hide.operation = "MAXIMUM"
-        links.new(geo.outputs["Backfacing"], hide.inputs[0])
-        links.new(not_camera.outputs["Value"], hide.inputs[1])
-        mix = nodes.new("ShaderNodeMixShader")
-        links.new(hide.outputs["Value"], mix.inputs["Fac"])
-        links.new(black.outputs["Emission"], mix.inputs[1])
-        links.new(transparent.outputs["BSDF"], mix.inputs[2])
-        links.new(mix.outputs["Shader"], out.inputs["Surface"])
     _materials[color] = mat
     return mat
+
+
+def preview_outline():
+    """Cycles has no backface culling: like Roblox, draw only the outline
+    faces pointing at the camera (the shell's faces point inward, so only its
+    far side shows, around the edges), and only to camera rays, or the prop
+    would sit in the shell's shadow. Preview only: the FBX keeps the plain
+    black palette material."""
+    mat = material("Outline")
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    out = nodes["Material Output"]
+    geo = nodes.new("ShaderNodeNewGeometry")
+    transparent = nodes.new("ShaderNodeBsdfTransparent")
+    black = nodes.new("ShaderNodeEmission")
+    black.inputs["Color"].default_value = (0, 0, 0, 1)
+    path = nodes.new("ShaderNodeLightPath")
+    not_camera = nodes.new("ShaderNodeMath")
+    not_camera.operation = "SUBTRACT"
+    not_camera.inputs[0].default_value = 1
+    links.new(path.outputs["Is Camera Ray"], not_camera.inputs[1])
+    hide = nodes.new("ShaderNodeMath")
+    hide.operation = "MAXIMUM"
+    links.new(geo.outputs["Backfacing"], hide.inputs[0])
+    links.new(not_camera.outputs["Value"], hide.inputs[1])
+    mix = nodes.new("ShaderNodeMixShader")
+    links.new(hide.outputs["Value"], mix.inputs["Fac"])
+    links.new(black.outputs["Emission"], mix.inputs[1])
+    links.new(transparent.outputs["BSDF"], mix.inputs[2])
+    links.new(mix.outputs["Shader"], out.inputs["Surface"])
 
 
 # ───────────────────────────── props ─────────────────────────────
@@ -263,12 +317,15 @@ def export(path, objs):
         apply_scale_options="FBX_SCALE_ALL",
         mesh_smooth_type="FACE",
         add_leaf_bones=False,
+        path_mode="COPY",
+        embed_textures=True,
         bake_space_transform=True,
     )
 
 
 def preview(path, roots):
     scene = bpy.context.scene
+    preview_outline()
     # Trees along the back, the small things in front.
     back = [r for r in roots if "Tree" in r.name]
     front = [r for r in roots if "Tree" not in r.name]
@@ -287,7 +344,7 @@ def preview(path, roots):
     cam = bpy.data.objects.new("Camera", bpy.data.cameras.new("Camera"))
     cam.data.lens = 50
     cam.location = (0, -88, 34)
-    cam.rotation_euler = (math.radians(68), 0, 0)
+    cam.rotation_euler = (math.radians(76), 0, 0)
     scene.collection.objects.link(cam)
     scene.camera = cam
     sun = bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
