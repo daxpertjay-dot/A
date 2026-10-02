@@ -47,7 +47,11 @@ RunHUD.ShowCaught({ canRevive = false, cost = 400, bankCoins = 100, robux = fals
 RunHUD.ShowResults({ score = 12345, newHighScore = true, highScore = 12345, distance = 1200, multiplier = 10, newMultiplier = 12, coins = 80, boxCoins = 250, boxBoards = 1, totalCoins = 330, survival = 40, revives = 1, rescued = { { id = "X", label = "🌈 Rainbow Tralalero", icon = "🦈", bonus = 12.5, isNew = true } }, pedestals = 3, bestCombo = 2.37, hypeStart = 1, hypeLeft = 0.2, xp = 12345, levelUps = { { name = "Trippi Troppi", icon = "🦐", from = 2, to = 3, bonus = 7.5 } } })
 RunHUD.ShowResults({ score = 10, newHighScore = false, highScore = 12345, distance = 10, multiplier = 10, newMultiplier = 10, coins = 1, boxCoins = 0, boxBoards = 0, totalCoins = 1, survival = 4, revives = 0, rescued = {}, pedestals = 3 })
 RunHUD.Hide()
--- Lobby outlines: on structures, not on the ground tiles or see-through parts.
+-- Edge-box outlines are off by default (the Blender props have their own);
+-- switched on, they go on structures, not the ground tiles or see-through parts.
+local Config = H.require(H.shared.Config)
+assert(Config.Lobby.Outlines == false, "SelectionBox outlines are off by default")
+Config.Lobby.Outlines = true
 local lobby = roblox.Instance.new("Folder"); lobby.Name = "Lobby"
 local groundModel = roblox.Instance.new("Model"); groundModel.Name = "Ground"; groundModel.Parent = lobby
 local grass = roblox.Instance.new("Part"); grass.Name = "Grass"; grass.Parent = groundModel

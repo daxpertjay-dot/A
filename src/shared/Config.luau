@@ -49,16 +49,40 @@ Config.Lobby = {
 	-- Black outline along the edges of every lobby part (cartoon look), drawn
 	-- on each player's side. The ground tiles are left out so the field
 	-- doesn't turn into a grid. Mark a part or model NoOutline to skip it.
-	Outlines = true,
+	-- Off: SelectionBox edges draw over far-away parts and double up where
+	-- parts touch. The Blender props (tools/blender) have real outlines.
+	Outlines = false,
 	OutlineThickness = 0.05, -- studs
 	OutlineColor = Color3.fromRGB(0, 0, 0),
-	-- Your own decoration models. Put Models in a folder with this name in
-	-- ServerStorage, named after a prop kind below, and they replace the
-	-- built-in blocky versions wherever that kind is placed (when the lobby
-	-- is generated). Each model is set on the ground (by its bounding box),
-	-- turned randomly and anchored.
+	-- Your own decoration models (e.g. the Blender props in assets/models).
+	-- Put Models in a folder with this name in ServerStorage, named after a
+	-- prop kind below ("Tree", or "Tree_2" etc. for variants). At startup
+	-- they replace the built-in blocky ones in the lobby map, at the same
+	-- spot and size; each is set on the ground, turned randomly and anchored.
 	PropsFolder = "LobbyProps",
 	PropKinds = { "Tree", "PineTree", "Bush", "Rock", "Flowers", "Lamp" },
+	-- Height (studs) of each built-in prop: your models are sized to match
+	-- when they come in far too big or small.
+	PropHeights = { Tree = 20, PineTree = 20, Bush = 3.5, Rock = 2.4, Flowers = 2, Lamp = 14 } :: { [string]: number },
+	-- Colours for imported prop meshes, by mesh name (tools/blender/props.py).
+	PropColors = {
+		Trunk = Color3.fromRGB(124, 84, 52),
+		Leaves = Color3.fromRGB(76, 170, 60),
+		LeavesLight = Color3.fromRGB(118, 204, 82),
+		Pine = Color3.fromRGB(40, 120, 70),
+		PineLight = Color3.fromRGB(60, 150, 84),
+		Rock = Color3.fromRGB(146, 146, 160),
+		RockDark = Color3.fromRGB(110, 110, 124),
+		Stem = Color3.fromRGB(70, 150, 60),
+		PetalRed = Color3.fromRGB(240, 70, 80),
+		PetalYellow = Color3.fromRGB(255, 210, 60),
+		PetalPink = Color3.fromRGB(250, 130, 200),
+		PetalBlue = Color3.fromRGB(90, 150, 255),
+		FlowerCenter = Color3.fromRGB(255, 236, 120),
+		Metal = Color3.fromRGB(52, 52, 64),
+		Bulb = Color3.fromRGB(255, 240, 170),
+		Outline = Color3.fromRGB(0, 0, 0),
+	} :: { [string]: Color3 },
 }
 
 -- ───────────────────────────── SCORE ─────────────────────────────

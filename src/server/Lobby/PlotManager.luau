@@ -237,12 +237,21 @@ end
 
 -- ───────────────────────────── contents ─────────────────────────────
 
+-- A floating name tag sized in studs (not pixels), so tags further away
+-- shrink instead of piling up on top of each other.
 local function label(parent: Instance, text: string, color: Color3?, offset: number?)
 	local anchor = parent
 	if parent:IsA("Model") and parent.PrimaryPart then
 		anchor = parent.PrimaryPart
 	end
-	Util.Billboard(anchor, text, UDim2.fromOffset(200, 54), Vector3.new(0, offset or 7, 0), color)
+	local tag = Util.Billboard(anchor, text, UDim2.fromScale(9, 2.4), Vector3.new(0, offset or 7, 0), color)
+	local gui = tag.Parent :: BillboardGui
+	gui.MaxDistance = 90
+end
+
+-- Text printed flat on an empty pedestal's floor marker.
+local function floorText(marker: BasePart, text: string, color: Color3)
+	Util.SurfaceLabel(marker, Enum.NormalId.Top, text, { PixelsPerStud = 30, TextColor = color })
 end
 
 local function refresh(plot: Plot)
@@ -297,12 +306,12 @@ local function refresh(plot: Plot)
 		else
 			local marker = part({ Parent = plot.dynamic, Name = "SlotMarker", Size = Vector3.new(6.6, 0.2, 6.6), CFrame = pedestalCf * CFrame.new(0, -0.15, 0), Transparency = 0.5, CanCollide = false, Studs = false, Color = Color3.fromRGB(255, 255, 255) })
 			if i <= profile.Pedestals then
-				label(marker, "EMPTY\nrescue Brainrots on runs!", Color3.fromRGB(210, 210, 210), 3)
+				floorText(marker, "EMPTY\nrescue one\non a run!", Color3.fromRGB(235, 235, 235))
 			else
 				-- Locked: buy it at the upgrade shop / Upgrades button.
 				marker.Color = Color3.fromRGB(60, 60, 70)
 				marker.Transparency = 0.1
-				label(marker, "🔒 LOCKED PEDESTAL\nbuy more in ⬆️ Upgrades", Color3.fromRGB(255, 200, 90), 3)
+				floorText(marker, "🔒 LOCKED\n⬆️ Upgrades", Color3.fromRGB(255, 200, 90))
 				LobbyBuilder.Prompt(marker, "Buy Pedestal", "Locked", "Upgrades")
 			end
 		end

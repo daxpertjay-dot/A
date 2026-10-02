@@ -52,8 +52,34 @@ local fs = require("@lune/fs")
 local map = roblox.deserializeModel(fs.readFile("map/Lobby.rbxm"))[1]
 map.Parent = H.workspace
 
+-- An imported Blender tree in ServerStorage.LobbyProps, in centimetres (100x
+-- too big): it replaces every blocky tree in the map, sized to match.
+local props = roblox.Instance.new("Folder"); props.Name = "LobbyProps"
+local meshTree = roblox.Instance.new("Model"); meshTree.Name = "Tree"; meshTree.Parent = props
+for _, spec in { { "Trunk", 200, 1100 }, { "Leaves", 1000, 800 }, { "Outline", 1040, 1940 } } do
+	local p = roblox.Instance.new("Part"); p.Name = spec[1]; p.Size = Vector3.new(spec[2], spec[3], spec[2])
+	p.CFrame = CFrame.new(0, spec[3] / 2, 0); p.Parent = meshTree
+end
+meshTree.PrimaryPart = meshTree.Trunk
+local blockyTrees = 0
+for _, d in map:GetDescendants() do if d:IsA("Model") and d.Name == "Tree" then blockyTrees += 1 end end
+H.services.ServerStorage.FindFirstChild = function(_, name) return if name == "LobbyProps" then props else nil end
+
 local Main = H.node(H.root .. "/server", nil, "Server")
 H.require(Main.Main)
+local swapped, wrongSize = 0, 0
+for _, d in map:GetDescendants() do
+	if d:IsA("Model") and d.Name == "Tree" then
+		assert(d:GetAttribute("CustomProp"), "every blocky tree is swapped")
+		swapped += 1
+		local _, size = d:GetBoundingBox()
+		if size.Y < 15 or size.Y > 40 then wrongSize += 1 end
+		assert(d.Outline.CanCollide == false and d.Outline.Color == roblox.Color3.new(0, 0, 0), "outline shell set up")
+		assert(d.Leaves.Color == H.require(H.shared.Config).Lobby.PropColors.Leaves, "meshes painted by name")
+	end
+end
+print("swapped trees", swapped, "of", blockyTrees, "wrong size", wrongSize)
+assert(swapped == blockyTrees and swapped > 0 and wrongSize == 0)
 playerAdded.fn(player)
 local PlayerData = H.require(Main.PlayerData)
 local profile = assert(PlayerData.Get(player), "profile not loaded")

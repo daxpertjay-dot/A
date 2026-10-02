@@ -31,6 +31,21 @@ roblox.implementMethod("Model", "PivotTo", function(m, target)
 	end
 	m.WorldPivot = delta * getPivot(m)
 end)
+local scales = {}
+roblox.implementMethod("Model", "GetScale", function(m) return scales[m] or 1 end)
+-- Scales every part's size and offset from the pivot, like Roblox.
+roblox.implementMethod("Model", "ScaleTo", function(m, target)
+	local factor = target / (scales[m] or 1)
+	local pivot = getPivot(m)
+	for _, d in m:GetDescendants() do
+		if d:IsA("BasePart") then
+			local rel = pivot:ToObjectSpace(d.CFrame)
+			d.Size *= factor
+			d.CFrame = pivot * (CFrame.new(rel.Position * factor) * rel.Rotation)
+		end
+	end
+	scales[m] = target
+end)
 roblox.implementMethod("Model", "GetBoundingBox", function(m)
 	local minV, maxV
 	for _, d in m:GetDescendants() do

@@ -11,6 +11,7 @@ tests/run.sh                                          # headless tests (lune), ~
 tests/run.sh boost sim                                # just some of them
 tools/bake_map.sh [lobby] [tracks]                    # → map/Lobby.rbxm, map/TrackAreas.rbxm (both by default)
 lune run tools/milestones.luau                        # score milestone math (after tests/mirror.py)
+python3.11 tools/blender/props.py                     # lobby props → assets/models/*.fbx (needs `pip install bpy`)
 rojo build place.project.json -o build/BrainrotRunner.rbxl     # place file for Studio (with the map)
 ```
 
@@ -46,6 +47,13 @@ PrimaryPart (track sections have an `Origin` part).
 - `src/client` → StarterPlayerScripts.Client: `RunController` (movement,
   collisions, tricks), `RunCamera`, `Chaser`, `UI/*`, `Main.client` (lobby ⇄ run flow).
 - `tests/` → Lune harness and tests (see below).
+- `assets/models/*.fbx` are lobby props made in Blender (`tools/blender/props.py`,
+  set PROPS_PREVIEW=out.png to render a Cycles preview; EEVEE needs a GPU,
+  so use Cycles here). Meshes are named after their colour key in
+  `Config.Lobby.PropColors` and the game paints them; "Outline" is an
+  inverted-hull toon outline. The user imports them in Studio into
+  `ServerStorage.LobbyProps`, and `LobbyBuilder.SwapProps` replaces the
+  blocky stand-ins in the map at startup.
 - `assets/StudTexture.png` (drawn by `tools/make_stud_texture.py`) is the
   lobby's stud texture. The user uploads it; its id goes in
   `Config.Lobby.StudTexture`. There is no Roblox network access from here,

@@ -230,8 +230,15 @@ With the 🚀 Jetpack your character flies Superman-style: tipped forward, one f
   3. Paste it into `Config.Lobby.StudTexture` (for example `"rbxassetid://1234567890"`).
 
   At startup it's applied to every part in `Workspace.Lobby`, including parts you add. Give a part or model a `NoStuds` attribute to keep it plain. It's a transparent overlay, so every part keeps its own colour. It goes on every face at least 1 stud across (`Config.Lobby.StudTextureMinFace`), so fence posts and caps get studs too.
-- **Black outlines**: every lobby part gets a thin black edge outline, the cartoon look from the references. The checkered ground is left out so the field doesn't turn into a grid. The outlines are drawn on each player's side when they join, including parts you add in Studio, so they don't show while you're editing. Set `NoOutline` on a part or model to skip it. Change `Config.Lobby.OutlineThickness` / `OutlineColor`, or turn them off with `Config.Lobby.Outlines = false`. Until you set it, parts use Roblox's classic round studs. To change the look, edit and re-run `tools/make_stud_texture.py`.
-- **Your own models**: since the map is editable, the easiest way is to place them in `Workspace.Lobby` in Studio. Alternatively, put Models named `Tree`, `PineTree`, `Bush`, `Rock`, `Flowers` or `Lamp` in a `ServerStorage.LobbyProps` folder. They replace the blocky versions whenever the lobby is generated: by `tools/bake_map.sh`, or at startup when there's no map.
+  Until you set it, parts use Roblox's classic round studs. To change the look, edit and re-run `tools/make_stud_texture.py`.
+- **Blender props with real outlines**: `assets/models/` has voxel trees, pine trees, bushes, rocks, flowers and a lamp, made in Blender by `tools/blender/props.py` (`preview.png` shows them). Each has a built-in black toon outline, which hides behind things like normal geometry and never doubles up. To use them:
+  1. In Studio, **Import 3D** `assets/models/LobbyProps.fbx`.
+  2. Move the imported model to **ServerStorage** and name it `LobbyProps`. Inside it should be the Models `Tree`, `Tree_2`, `PineTree`, `PineTree_2`, `Bush`, `Bush_2`, `Rock`, `Rock_2`, `Flowers` and `Lamp`. If the importer nests them differently, move them up so they sit directly in `LobbyProps`. The single files (`Tree.fbx` …) also work: import one and name it after its kind.
+  3. Press Play. At startup every blocky tree, bush, rock, flower patch and lamp in the lobby map is swapped for one of your models, at the same spot and size. Variants are picked at random.
+
+  The game colours the meshes itself by their names (`Config.Lobby.PropColors`) and sizes them to match the blocky ones, so the importer's colour and unit settings don't matter. The outline is the mesh named `Outline`, and it relies on MeshParts being one-sided, so leave `DoubleSided` off.
+- **Edge outlines on parts** (`Config.Lobby.Outlines`) are off: those SelectionBox outlines showed on far-away parts and doubled up where parts touched.
+- **Your own models**: place them in `Workspace.Lobby` in Studio, or put Models named `Tree`, `PineTree`, `Bush`, `Rock`, `Flowers` or `Lamp` (or `Tree_2` etc. for variants) in `ServerStorage.LobbyProps` to replace the blocky ones, like the Blender props above.
 - Your base has:
   - your pedestals, with a big **SCORE MULTIPLIER** sign (showing Hype too), with each Brainrot's level above it; locked pedestals can be bought right there
   - your high score
@@ -250,6 +257,7 @@ tools/milestones.luau          score milestone math (distance / time to each are
 place.project.json             builds the place with the map; default.project.json = scripts only (rojo serve)
 assets/StudTexture.png         the lobby's stud texture (upload it; see "Lobby & your base")
 tools/make_stud_texture.py     draws that texture
+tools/blender/props.py         builds the lobby props in Blender → assets/models/*.fbx
 tests/                         headless tests (tests/run.sh)
 src/
 ├── shared/                    ReplicatedStorage.Shared

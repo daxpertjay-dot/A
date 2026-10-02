@@ -180,31 +180,120 @@ end
 
 -- ───────────────────────────── your models ─────────────────────────────
 
--- Places your own model of `kind` (ServerStorage.LobbyProps.<kind>) standing
--- on the ground at `position`. Returns false when there isn't one, so the
--- caller builds its blocky stand-in instead.
-function LobbyBuilder.Prop(kind: string, parent: Instance, position: Vector3, scale: number?): boolean
+-- Your models of `kind` in ServerStorage.LobbyProps: named like the kind,
+-- or the kind plus a suffix for variants ("Tree", "Tree_2", "Tree Big"…).
+local function propTemplates(kind: string): { Model }
 	local folder = ServerStorage:FindFirstChild(L.PropsFolder)
-	local template = folder and folder:FindFirstChild(kind)
-	if not template or not template:IsA("Model") then
-		return false
+	local found = {}
+	if folder then
+		for _, child in folder:GetChildren() do
+			local suffix = child.Name:sub(#kind + 1)
+			if child:IsA("Model") and child.Name:sub(1, #kind) == kind and (suffix == "" or suffix:match("^[%s_%-]") ~= nil) then
+				table.insert(found, child)
+			end
+		end
 	end
-	local model = template:Clone()
-	if scale and scale ~= 1 then
-		model:ScaleTo(model:GetScale() * scale)
-	end
+	return found
+end
+
+-- Imported meshes (tools/blender/props.py) are named after their colour:
+-- paint them from Config.Lobby.PropColors. "Outline" is the black toon
+-- shell, "Bulb" a lamp's light.
+local function finishProp(model: Model)
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.Anchored = true
+			local color = L.PropColors[d.Name]
+			if color then
+				d.Color = color
+			end
+			if d.Name == "Outline" then
+				d.CanCollide = false
+				d.CanQuery = false
+				d.CanTouch = false
+				d.CastShadow = false
+			elseif d.Name == "Bulb" then
+				d.Material = Enum.Material.Neon
+				if not d:FindFirstChildWhichIsA("Light") then
+					local light = Instance.new("PointLight")
+					light.Range = 18
+					light.Brightness = 1.2
+					light.Color = Color3.fromRGB(255, 230, 170)
+					light.Parent = d
+				end
+			end
 		end
+	end
+	-- They bring their own look: no stud texture, no edge boxes.
+	model:SetAttribute("NoStuds", true)
+	model:SetAttribute("NoOutline", true)
+	model:SetAttribute("CustomProp", true)
+end
+
+-- Places one of your models of `kind` standing on the ground at `position`
+-- (a random variant, turned randomly). `scale` is relative to the built-in
+-- prop's size (Config.Lobby.PropHeights); a model that comes in far too big
+-- or small (other units in the importer) is fitted to that size. Returns
+-- nil when you have none, so the caller builds its blocky stand-in.
+function LobbyBuilder.Prop(kind: string, parent: Instance, position: Vector3, scale: number?): Model?
+	local templates = propTemplates(kind)
+	if #templates == 0 then
+		return nil
+	end
+	local model = templates[rng:NextInteger(1, #templates)]:Clone()
+	finishProp(model)
+	local s = scale or 1
+	local _, size = model:GetBoundingBox()
+	local want = (L.PropHeights[kind] or size.Y) * s
+	local ratio = want / math.max(size.Y, 0.01)
+	if ratio > 2 or ratio < 0.5 then
+		model:ScaleTo(model:GetScale() * ratio)
+	elseif s ~= 1 then
+		model:ScaleTo(model:GetScale() * s)
 	end
 	-- Stand it on the ground: put the bottom of its bounding box at `position`.
 	local pivot = model:GetPivot()
-	local box, size = model:GetBoundingBox()
-	local pivotAboveBottom = pivot.Position.Y - (box.Position.Y - size.Y / 2)
+	local box, boxSize = model:GetBoundingBox()
+	local pivotAboveBottom = pivot.Position.Y - (box.Position.Y - boxSize.Y / 2)
 	model:PivotTo(CFrame.new(position + Vector3.new(0, pivotAboveBottom, 0)) * CFrame.Angles(0, rng:NextNumber(0, math.pi * 2), 0) * pivot.Rotation)
 	model.Parent = parent
-	return true
+	return model
+end
+
+-- Swaps the blocky props in the lobby map (Models named Tree, PineTree,
+-- Bush, …) for your models of the same kind, keeping where they stand and
+-- how big they are. Returns how many were swapped.
+function LobbyBuilder.SwapProps(root: Instance): number
+	local kinds = {}
+	for _, kind in L.PropKinds do
+		if #propTemplates(kind) > 0 then
+			kinds[kind] = true
+		end
+	end
+	if next(kinds) == nil then
+		return 0
+	end
+	local stand = {}
+	for _, d in root:GetDescendants() do
+		if d:IsA("Model") and kinds[d.Name] and not d:GetAttribute("CustomProp") then
+			table.insert(stand, d)
+		end
+	end
+	local swapped = 0
+	for _, old in stand do
+		local ok, box, size = pcall(function()
+			return old:GetBoundingBox()
+		end)
+		if ok and old.Parent then
+			local bottom = box.Position - Vector3.new(0, size.Y / 2, 0)
+			local scale = size.Y / (L.PropHeights[old.Name] or size.Y)
+			if LobbyBuilder.Prop(old.Name, old.Parent :: Instance, bottom, scale) then
+				old:Destroy()
+				swapped += 1
+			end
+		end
+	end
+	return swapped
 end
 
 -- ───────────────────────────── building blocks ─────────────────────────────
@@ -666,6 +755,7 @@ function LobbyBuilder.Build(): Instance
 	local existing = workspace:FindFirstChild("Lobby")
 	if existing then
 		lobby = existing
+		LobbyBuilder.SwapProps(lobby)
 	else
 		LobbyBuilder.Generate()
 	end
