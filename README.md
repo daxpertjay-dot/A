@@ -18,17 +18,29 @@ Everything (lobby, bases, track, characters, UI) is built from code, so it runs 
 **Option A: open the built place (quickest)**
 
 ```bash
-rojo build default.project.json -o BrainrotRunner.rbxl
+rojo build place.project.json -o BrainrotRunner.rbxl
 ```
 
-Open the file in Studio and press **Play**. To put it on your experience, use **File → Publish to Roblox As…** and choose your place.
+Open the file in Studio and press **Play**. To put it on your experience, use **File → Publish to Roblox As…** and choose your place. The place includes the lobby map, `Workspace.Lobby`.
 
-**Option B: live-sync with Rojo**
+**Option B: live-sync the scripts with Rojo**
 
 1. Install [Rojo](https://rojo.space) (the CLI plus the Studio plugin). VS Code is not needed.
-2. Run `rojo serve` in this folder.
-3. In Studio, go to **Plugins → Rojo → Connect**.
-4. Press **Play**.
+2. Open your place in Studio (the one built in Option A, saved as your own).
+3. Run `rojo serve` in this folder.
+4. In Studio, go to **Plugins → Rojo → Connect**.
+5. Press **Play**.
+
+`rojo serve` (`default.project.json`) syncs only the scripts. It never touches `Workspace.Lobby`, so your edits to the map stay in your place.
+
+**The lobby map.** `Workspace.Lobby` is a normal map: move, recolour, delete or add anything in Studio. If there's no `Workspace.Lobby`, the game generates the default one at startup. The map file `map/Lobby.rbxm` is made from `src/server/Lobby/LobbyBuilder.luau` by `tools/bake_map.sh`.
+
+Rebuilding the place from this repo replaces the map with the repo's copy. To keep your Studio edits, right-click `Workspace.Lobby` → **Save to File…**, save it over `map/Lobby.rbxm` and commit it.
+
+Most of the map is free to change, but a few things are found by name:
+- **Bases** are the Models `Plot1`, `Plot2`, … Each needs a `PlotFloor`, `ArchBeam`, `MultiplierSign`, `HighScoreSign`, `RunEntranceTrigger` and `Pedestal1`–`Pedestal10`. Move or rotate a whole base freely; delete one and there's one fewer base.
+- **Conveyors** are parts tagged `Conveyor`. They push toward their front at their `Speed` attribute, so you can move and turn them too.
+- **Run portals** are parts tagged `RunEntranceTrigger`. The shop, upgrades, daily gift and leaderboard work through their ProximityPrompts, wherever you put them.
 
 To use DataStores and leaderboards in Studio, turn on **Game Settings → Security → Enable Studio Access to API Services**.
 
@@ -175,25 +187,17 @@ Verity is a big angry Brainrot guy: a giant pink brain with a mustache, a top ha
 With the 🚀 Jetpack your character flies Superman-style: tipped forward, one fist out, with a flaming jetpack on your back. To use a real animation instead, put its ID in `Config.Animations.Fly`.
 
 ### Lobby & your base
-- The lobby is a blocky street with a conveyor loop, an ⬆️ Upgrades stall, a shop, daily rewards, the leaderboard, and a statue of Verity (WANTED). Palms, trees, bushes and rocks line the grass around the plots.
+- **The lobby is a big blocky valley** in the style of your references: checkered grass with studs, closed in on every side by terraced, checkered cliffs. The cliffs have brown checker sides, grass tops and trees on the ledges, and a giant Verity watches from the north cliff.
+  - **In the middle** is the light-stone **SAFE ZONE**: spawn, the ⬆️ Upgrades and 🛒 Shop stands (wooden, with coloured roofs), the 🎁 daily gift, the 🏆 leaderboard, the WANTED statue of Verity and the public run gate.
+  - **Around it** is a stone **ring road with a conveyor loop**. Paths lead to the **8 fenced bases**: 3 north, 3 south, 1 west and 1 east, each 80×100 studs.
+  - Voxel trees, pine trees, bushes, flowers and rocks fill the grass in between.
 - **Stud texture**: the square studs on every face, the Steal a Brainrot / Grow a Garden look. Turn it on in three steps:
   1. Upload `assets/StudTexture.png` in Studio (**Asset Manager → Import**).
   2. Copy its asset ID.
   3. Paste it into `Config.Lobby.StudTexture` (for example `"rbxassetid://1234567890"`).
 
-  It's a transparent overlay, so every part keeps its own colour. Until you set it, parts use Roblox's classic round studs. To change the look, edit and re-run `tools/make_stud_texture.py`.
-- **Your own models**: make a folder named `LobbyProps` in **ServerStorage** and put Models in it named after a prop kind. They replace the blocky stand-ins everywhere that kind is placed:
-
-  | Model name | Where it goes |
-  |---|---|
-  | `Tree` | down the hub strip, and on the grass around the plots |
-  | `PalmTree` | on the grass around the plots, and at both ends of the street |
-  | `Bush` | the 4 corners of every base, and around the map |
-  | `Rock` | on the grass around the plots |
-  | `Flowers` | the flower beds in the middle of the street |
-  | `Lamp` | down the hub strip |
-
-  Each model is stood on the ground by its bounding box, turned randomly and anchored. Build them about the size of the blocky versions: trees roughly 14 studs tall, bushes 3–4 studs.
+  At startup it's applied to every part in `Workspace.Lobby`, including parts you add. Give a part or model a `NoStuds` attribute to keep it plain. It's a transparent overlay, so every part keeps its own colour, and faces smaller than 4×4 studs are skipped to keep the texture count down. Until you set it, parts use Roblox's classic round studs. To change the look, edit and re-run `tools/make_stud_texture.py`.
+- **Your own models**: since the map is editable, the easiest way is to place them in `Workspace.Lobby` in Studio. Alternatively, put Models named `Tree`, `PineTree`, `Bush`, `Rock`, `Flowers` or `Lamp` in a `ServerStorage.LobbyProps` folder. They replace the blocky versions whenever the lobby is generated: by `tools/bake_map.sh`, or at startup when there's no map.
 - Your base has:
   - your pedestals, with a big **SCORE MULTIPLIER** sign (showing Hype too), with each Brainrot's level above it; locked pedestals can be bought right there
   - your high score
@@ -206,6 +210,8 @@ With the 🚀 Jetpack your character flies Superman-style: tipped forward, one f
 ## Project layout
 
 ```
+map/Lobby.rbxm                 the lobby map (Workspace.Lobby), made by tools/bake_map.sh
+place.project.json             builds the place with the map; default.project.json = scripts only (rojo serve)
 assets/StudTexture.png         the lobby's stud texture (upload it; see "Lobby & your base")
 tools/make_stud_texture.py     draws that texture
 tests/                         headless tests (tests/run.sh)
@@ -225,7 +231,7 @@ src/
 │   ├── PlayerData.luau        profiles (coins, Brainrots + XP, Hype, pedestals, upgrades, hoverboards, stats)
 │   ├── Economy.luau           upgrades, pedestals, hoverboards, daily, Robux receipts
 │   ├── Leaderboards.luau      high score + other global boards
-│   ├── Lobby/LobbyBuilder.luau  the street, stalls, conveyors, statue
+│   ├── Lobby/LobbyBuilder.luau  the lobby map: valley, cliffs, SAFE ZONE, roads, conveyors (+ using the saved map)
 │   ├── Lobby/PlotManager.luau   player bases: pedestals, multiplier sign, run portal
 │   └── Run/
 │       ├── RunManager.luau    run lifecycle, score, combo, Hype, power-ups, rescues, XP, results

@@ -47,11 +47,24 @@ local hum = roblox.Instance.new("Humanoid"); hum.Parent = character; hum.Health 
 character.PrimaryPart = root
 player.Character = character
 
+-- Start with the saved lobby map in Workspace, as in the real place.
+local fs = require("@lune/fs")
+local map = roblox.deserializeModel(fs.readFile("map/Lobby.rbxm"))[1]
+map.Parent = H.workspace
+
 local Main = H.node(H.root .. "/server", nil, "Server")
 H.require(Main.Main)
 playerAdded.fn(player)
 local PlayerData = H.require(Main.PlayerData)
 local profile = assert(PlayerData.Get(player), "profile not loaded")
+-- The map's own bases were used (not rebuilt), and the player got one.
+local plots = 0
+for _, child in map:GetChildren() do
+	if child.Name:match("^Plot%d+$") then plots += 1 end
+end
+assert(plots == 8, "the saved map's 8 bases are used, none added")
+assert(#map.Plot1.Dynamic:GetChildren() > 0, "the player's Brainrots stand in their base")
+assert(map.Plot1.RunEntranceTrigger:GetAttribute("OwnerUserId") == player.UserId, "the base's portal belongs to the player")
 print("new profile: coins", profile.Coins, "boards", profile.Hoverboards, "pedestals", profile.Pedestals, "multiplier", PlayerData.Multiplier(profile))
 
 local function inv(name, ...) local r = fnTables[name].OnServerInvoke(player, ...); print(name, r.ok, r.message or r.level or r.pedestals or r.hoverboards or ""); return r end

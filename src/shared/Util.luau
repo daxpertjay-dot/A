@@ -96,7 +96,8 @@ function Util.SurfaceLabel(part: BasePart, face: Enum.NormalId, text: string, op
 	label.BackgroundColor3 = o.Background or Color3.new(0, 0, 0)
 	label.BackgroundTransparency = if o.BackgroundTransparency == nil then 1 else o.BackgroundTransparency
 	label.TextColor3 = o.TextColor or Color3.new(1, 1, 1)
-	label.Font = o.Font or Enum.Font.FredokaOne
+	-- FontFace (not the legacy Font) so labels can be saved in a map file.
+	label.FontFace = Font.fromEnum(o.Font or Enum.Font.FredokaOne)
 	label.TextScaled = true
 	label.Text = text
 	label.RichText = true
@@ -125,7 +126,7 @@ function Util.Billboard(adornee: Instance, text: string, size: UDim2?, offset: V
 	label.Size = UDim2.fromScale(1, 1)
 	label.BackgroundTransparency = 1
 	label.TextColor3 = color or Color3.new(1, 1, 1)
-	label.Font = Enum.Font.FredokaOne
+	label.FontFace = Font.fromEnum(Enum.Font.FredokaOne)
 	label.TextScaled = true
 	label.Text = text
 	label.Parent = gui

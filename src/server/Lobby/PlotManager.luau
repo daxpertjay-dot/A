@@ -1,5 +1,6 @@
 --!strict
--- Player bases. Every player gets their own plot on the street:
+-- Player bases. Every player gets their own fenced plot off the ring road
+-- (positions: LobbyBuilder.PlotSlots; in a saved map, the Plot<n> Models):
 --
 --   back   ┌────────────────────────────┐
 --          │  🏃 START RUN (your portal) │  ← mini run lane
@@ -7,9 +8,9 @@
 --          │ [🧠][🧠][🧠][🔒][🔒]         │  ← rescued Brainrots on pedestals:
 --          │ [🧠][🧠][🧠][🔒][🔒]         │     each adds to your SCORE MULTIPLIER
 --          │   ⭐ SCORE MULTIPLIER x7     │  ← plus ⚡ Hype charging up
---   front  └──────── "Jay's BASE" ──────┘  ← faces the street
+--   front  └──────── "Jay's BASE" ──────┘  ← faces the ring road / plaza
 --
--- Plot local space: -Z points at the street, +X runs along it.
+-- Plot local space: -Z points at the entrance (toward the plaza).
 
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
@@ -34,7 +35,7 @@ local part = LobbyBuilder.Part
 type Plot = {
 	index: number,
 	cf: CFrame,
-	folder: Folder,
+	folder: Model,
 	dynamic: Folder,
 	owner: Player?,
 	signLabel: TextLabel,
@@ -66,33 +67,43 @@ end
 
 -- ───────────────────────────── building ─────────────────────────────
 
+-- Wooden fence like the references: brown posts with dark capped tops and
+-- two rails.
 local function fence(parent: Instance, cf: CFrame, from: Vector3, to: Vector3)
 	local mid = (from + to) / 2
 	local length = (to - from).Magnitude
 	local rail = CFrame.lookAt((cf * CFrame.new(mid)).Position, (cf * CFrame.new(to)).Position)
-	part({ Parent = parent, Name = "FenceRail", Size = Vector3.new(0.6, 0.6, length), CFrame = rail * CFrame.new(0, 2.4, 0), Color = Color3.fromRGB(255, 255, 255) })
-	part({ Parent = parent, Name = "FenceRail", Size = Vector3.new(0.6, 0.6, length), CFrame = rail * CFrame.new(0, 1.3, 0), Color = Color3.fromRGB(255, 255, 255) })
-	local posts = math.max(1, math.floor(length / 8))
+	for _, y in { 1.4, 2.8 } do
+		part({ Parent = parent, Name = "FenceRail", Size = Vector3.new(0.5, 0.7, length), CFrame = rail * CFrame.new(0, y, 0), Color = LobbyBuilder.Colors.Wood })
+	end
+	local posts = math.max(1, math.floor(length / 10))
 	for i = 0, posts do
 		local p = from:Lerp(to, i / posts)
-		part({ Parent = parent, Name = "FencePost", Size = Vector3.new(1, 3.4, 1), CFrame = cf * CFrame.new(p + Vector3.new(0, 1.7, 0)), Color = Color3.fromRGB(255, 255, 255) })
+		part({ Parent = parent, Name = "FencePost", Size = Vector3.new(1.2, 3.6, 1.2), CFrame = cf * CFrame.new(p + Vector3.new(0, 1.8, 0)), Color = LobbyBuilder.Colors.FencePost })
+		part({ Parent = parent, Name = "FenceCap", Size = Vector3.new(1.7, 1, 1.7), CFrame = cf * CFrame.new(p + Vector3.new(0, 4, 0)), Color = LobbyBuilder.Colors.FenceCap })
 	end
 end
 
-local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
+-- Builds base number `index` as a Model ("Plot<index>") in the lobby. The
+-- pieces the game needs later are found again by name (see adoptPlot), so a
+-- base saved in the map and edited in Studio works the same way.
+local function buildPlot(index: number, slot: LobbyBuilder.PlotSlot): Model
+	local center, facing = slot.center, slot.facing
 	local cf = CFrame.lookAt(center, center + facing)
-	local folder = Instance.new("Folder")
+	local folder = Instance.new("Model")
 	folder.Name = ("Plot%d"):format(index)
 	folder.Parent = LobbyBuilder.Folder()
-	local dynamic = Instance.new("Folder")
-	dynamic.Name = "Dynamic"
-	dynamic.Parent = folder
 
 	local W, D = L.PlotWidth, L.PlotDepth
 	local color = PLOT_COLORS[(index - 1) % #PLOT_COLORS + 1]
 
-	-- Floor + fence (gap at the front for the entrance)
-	part({ Parent = folder, Name = "PlotFloor", Size = Vector3.new(W, 1.2, D), CFrame = cf * CFrame.new(0, 0, 0), Color = color })
+	-- Grass floor with a coloured border, fenced (gap at the front)
+	local floor = part({ Parent = folder, Name = "PlotFloor", Size = Vector3.new(W, 1.2, D), CFrame = cf, Color = LobbyBuilder.Colors.PlotGrass })
+	folder.PrimaryPart = floor
+	for _, side in { -1, 1 } do
+		part({ Parent = folder, Name = "PlotBorder", Size = Vector3.new(2, 1.3, D), CFrame = cf * CFrame.new(side * (W / 2 - 1), 0.05, 0), Color = color })
+		part({ Parent = folder, Name = "PlotBorder", Size = Vector3.new(W, 1.3, 2), CFrame = cf * CFrame.new(0, 0.05, side * (D / 2 - 1)), Color = color })
+	end
 	local y = 0.6
 	fence(folder, cf, Vector3.new(-W / 2, y, D / 2), Vector3.new(W / 2, y, D / 2))
 	fence(folder, cf, Vector3.new(-W / 2, y, -D / 2), Vector3.new(-W / 2, y, D / 2))
@@ -105,28 +116,32 @@ local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
 		part({ Parent = folder, Name = "ArchPost", Size = Vector3.new(2, 14, 2), CFrame = cf * CFrame.new(sx, y + 7, -D / 2), Color = LobbyBuilder.Colors.Wood })
 	end
 	local beam = part({ Parent = folder, Name = "ArchBeam", Size = Vector3.new(22, 4, 2), CFrame = cf * CFrame.new(0, y + 15, -D / 2), Color = color:Lerp(Color3.new(0, 0, 0), 0.25) })
-	local signLabel = Util.SurfaceLabel(beam, Enum.NormalId.Front, "EMPTY PLOT", { PixelsPerStud = 20 })
+	Util.SurfaceLabel(beam, Enum.NormalId.Front, "EMPTY PLOT", { PixelsPerStud = 20 })
 
 	-- A bush in each corner (your "Bush" model if you've made one)
 	for _, corner in { Vector2.new(-1, -1), Vector2.new(1, -1), Vector2.new(-1, 1), Vector2.new(1, 1) } do
-		LobbyBuilder.Bush(folder, (cf * CFrame.new(corner.X * (W / 2 - 4), y, corner.Y * (D / 2 - 5))).Position)
+		LobbyBuilder.Bush(folder, (cf * CFrame.new(corner.X * (W / 2 - 5), y, corner.Y * (D / 2 - 6))).Position)
 	end
 
 	-- ⭐ Big score multiplier sign facing the entrance
-	local multiplierLabel = LobbyBuilder.Sign(folder, (cf * CFrame.new(0, y + 9, -30)).Position, (cf * CFrame.new(0, y + 9, -60)).Position, "⭐ SCORE MULTIPLIER x1", Color3.fromRGB(255, 190, 0), 26, 5, 6.5)
+	local multiplierSign = Instance.new("Model")
+	multiplierSign.Name = "MultiplierSign"
+	multiplierSign.Parent = folder
+	LobbyBuilder.Sign(multiplierSign, (cf * CFrame.new(0, y + 9, -32)).Position, (cf * CFrame.new(0, y + 9, -60)).Position, "⭐ SCORE MULTIPLIER x1", Color3.fromRGB(255, 190, 0), 26, 5, 6.5)
 
-	-- 🧠 Brainrot pedestals (2 rows of 5). Locked ones can be bought with coins.
-	local pedestals = {}
+	-- 🧠 Brainrot pedestals (2 rows of 5), numbered in the order they fill up.
+	-- Locked ones can be bought with coins.
+	local n = 0
 	for _, z in { -18, -4 } do
 		for _, x in { -24, -12, 0, 12, 24 } do
-			local pedestal = part({ Parent = folder, Name = "Pedestal", Size = Vector3.new(7, 2, 7), CFrame = cf * CFrame.new(x, y + 1, z), Color = Color3.fromRGB(245, 245, 245) })
+			n += 1
+			local pedestal = part({ Parent = folder, Name = ("Pedestal%d"):format(n), Size = Vector3.new(7, 2, 7), CFrame = cf * CFrame.new(x, y + 1, z), Color = Color3.fromRGB(245, 245, 245) })
 			part({ Parent = folder, Name = "PedestalTrim", Size = Vector3.new(7.4, 0.4, 7.4), CFrame = pedestal.CFrame * CFrame.new(0, 1.1, 0), Color = color:Lerp(Color3.new(0, 0, 0), 0.2) })
-			table.insert(pedestals, cf * CFrame.new(x, y + 2.3, z))
 		end
 	end
 
 	-- 🏃 Mini run area: a little 3-lane track leading to your own run portal.
-	local trackCf = cf * CFrame.new(0, y, 27)
+	local trackCf = cf * CFrame.new(0, y, 30)
 	part({ Parent = folder, Name = "MiniTrack", Size = Vector3.new(24, 0.4, 26), CFrame = trackCf * CFrame.new(0, 0.2, 0), Color = Color3.fromRGB(70, 70, 80) })
 	for _, lx in { -4, 4 } do
 		for dz = -11, 11, 5 do
@@ -134,17 +149,16 @@ local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
 		end
 	end
 	part({ Parent = folder, Name = "MiniBarricade", Size = Vector3.new(6, 2, 0.6), CFrame = trackCf * CFrame.new(-8, 1.4, -6), Color = Color3.fromRGB(230, 60, 60) })
-	part({ Parent = folder, Name = "MiniSign", Size = Vector3.new(6, 3, 0.4), CFrame = trackCf * CFrame.new(8, 4.5, 0), Color = Color3.fromRGB(40, 140, 255) })
-	for _, sx in { 5.2, 10.8 } do
-		part({ Parent = folder, Name = "MiniSignPost", Size = Vector3.new(0.4, 6, 0.4), CFrame = trackCf * CFrame.new(sx, 3, 0), Color = Color3.fromRGB(80, 80, 90) })
-	end
 	for dz = -10, 6, 4 do
 		local coin = part({ Parent = folder, Name = "MiniCoin", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.3, 1.6, 1.6), CFrame = trackCf * CFrame.new(0, 2, dz) * CFrame.Angles(0, math.rad(90), 0), Color = Color3.fromRGB(255, 200, 40), Material = Enum.Material.Neon, CanCollide = false, Studs = false })
 		CollectionService:AddTag(coin, "LobbySpin")
 		coin:SetAttribute("Speed", 3)
 	end
 	-- High score sign beside the track
-	local bestLabel = LobbyBuilder.Sign(folder, (cf * CFrame.new(-21, y + 7, 24)).Position, (cf * CFrame.new(-21, y + 7, 0)).Position, "🏆 HIGH SCORE: 0", Color3.fromRGB(255, 170, 0), 14, 4, 5)
+	local highScoreSign = Instance.new("Model")
+	highScoreSign.Name = "HighScoreSign"
+	highScoreSign.Parent = folder
+	LobbyBuilder.Sign(highScoreSign, (cf * CFrame.new(-24, y + 7, 26)).Position, (cf * CFrame.new(-24, y + 7, 0)).Position, "🏆 HIGH SCORE: 0", Color3.fromRGB(255, 170, 0), 14, 4, 5)
 
 	-- The portal
 	for _, sx in { -12, 12 } do
@@ -156,23 +170,67 @@ local function buildPlot(index: number, center: Vector3, facing: Vector3): Plot
 	CollectionService:AddTag(portal, "LobbyPulse")
 	local trigger = part({ Parent = folder, Name = "RunEntranceTrigger", Size = Vector3.new(22, 12, 3), CFrame = trackCf * CFrame.new(0, 6, 11), Transparency = 1, CanCollide = false, Studs = false })
 	trigger.CanTouch = true
-	trigger:SetAttribute("OwnerUserId", 0)
-	trigger:SetAttribute("PlotIndex", index)
 	CollectionService:AddTag(trigger, "RunEntranceTrigger")
 	part({ Parent = folder, Name = "PortalBackstop", Size = Vector3.new(26, 18, 1), CFrame = trackCf * CFrame.new(0, 9, 13.5), Transparency = 1, Studs = false })
 
+	local dynamic = Instance.new("Folder")
+	dynamic.Name = "Dynamic"
+	dynamic.Parent = folder
+	return folder
+end
+
+-- Builds every base into the lobby (when it's generated from code, and when
+-- the map is baked).
+function PlotManager.BuildPlots()
+	for i, slot in LobbyBuilder.PlotSlots() do
+		buildPlot(i, slot)
+	end
+end
+
+local function textIn(container: Instance?): TextLabel?
+	return if container then container:FindFirstChildWhichIsA("TextLabel", true) else nil
+end
+
+-- Picks up a base from the map by the names buildPlot gave its pieces.
+local function adoptPlot(index: number, model: Model): Plot?
+	local floor = model:FindFirstChild("PlotFloor")
+	local trigger = model:FindFirstChild("RunEntranceTrigger")
+	local signLabel = textIn(model:FindFirstChild("ArchBeam"))
+	local multiplierLabel = textIn(model:FindFirstChild("MultiplierSign"))
+	local bestLabel = textIn(model:FindFirstChild("HighScoreSign"))
+	if not (floor and floor:IsA("BasePart") and trigger and trigger:IsA("BasePart") and signLabel and multiplierLabel and bestLabel) then
+		warn(("[PlotManager] %s is missing pieces (PlotFloor, RunEntranceTrigger, ArchBeam, MultiplierSign, HighScoreSign); skipping it"):format(model.Name))
+		return nil
+	end
+	local pedestals = {}
+	for n = 1, Config.Score.MaxPedestals do
+		local pedestal = model:FindFirstChild(("Pedestal%d"):format(n))
+		if pedestal and pedestal:IsA("BasePart") then
+			-- Brainrots stand on top of the pedestal, facing the way it faces.
+			table.insert(pedestals, pedestal.CFrame * CFrame.new(0, pedestal.Size.Y / 2 + 0.3, 0))
+		end
+	end
+	local dynamic = model:FindFirstChild("Dynamic")
+	if not dynamic then
+		dynamic = Instance.new("Folder")
+		dynamic.Name = "Dynamic"
+		dynamic.Parent = model
+	end
+	dynamic:ClearAllChildren()
+	trigger:SetAttribute("OwnerUserId", 0)
+	trigger:SetAttribute("PlotIndex", index)
 	return {
 		index = index,
-		cf = cf,
-		folder = folder,
-		dynamic = dynamic,
+		cf = floor.CFrame,
+		folder = model,
+		dynamic = dynamic :: Folder,
 		owner = nil,
 		signLabel = signLabel,
 		bestLabel = bestLabel,
 		multiplierLabel = multiplierLabel,
 		pedestals = pedestals,
 		trigger = trigger,
-		color = color,
+		color = floor.Color,
 		signature = "",
 	}
 end
@@ -284,7 +342,7 @@ local function assign(player: Player)
 			return
 		end
 	end
-	notify(player, "All bases are taken — use the public run gate at the end of the street!", Color3.fromRGB(255, 200, 90))
+	notify(player, "All bases are taken — use the public run gate in the SAFE ZONE!", Color3.fromRGB(255, 200, 90))
 end
 
 local function release(player: Player)
@@ -297,14 +355,23 @@ local function release(player: Player)
 end
 
 function PlotManager.Init()
-	local half = LobbyBuilder.StreetLength() / 2
-	for side = -1, 1, 2 do
-		for i = 1, L.PlotsPerSide do
-			local z = -half + L.PlotGap + L.PlotWidth / 2 + (i - 1) * (L.PlotWidth + L.PlotGap)
-			local x = side * (L.StreetHalfWidth + L.PlotDepth / 2)
-			local center = L.Origin + Vector3.new(x, 0, z)
-			table.insert(plots, buildPlot(#plots + 1, center, Vector3.new(-side, 0, 0)))
+	-- Use the bases in the lobby map (Plot1, Plot2, …); build them if the
+	-- map has none.
+	local lobby = LobbyBuilder.Folder()
+	if not lobby:FindFirstChild("Plot1") then
+		PlotManager.BuildPlots()
+	end
+	local index = 1
+	while true do
+		local model = lobby:FindFirstChild(("Plot%d"):format(index))
+		if not model then
+			break
 		end
+		local plot = if model:IsA("Model") then adoptPlot(#plots + 1, model) else nil
+		if plot then
+			table.insert(plots, plot)
+		end
+		index += 1
 	end
 
 	-- Refresh a player's base whenever their data changes (first change = loaded).

@@ -27,11 +27,15 @@ Config.Villain = {
 -- ───────────────────────────── LOBBY ─────────────────────────────
 Config.Lobby = {
 	Origin = Vector3.new(0, 0, 0),
-	PlotsPerSide = 4,
-	PlotWidth = 64, -- along the street (Z)
-	PlotDepth = 84, -- away from the street (X)
-	PlotGap = 10,
-	StreetHalfWidth = 34, -- plots start this far from the centre line
+	-- A big green valley closed in by terraced, checkered cliffs.
+	ValleyHalfSize = 340, -- centre to the foot of the cliffs (studs)
+	CliffRings = 4, -- terraces, each one higher than the last
+	CliffStep = 40, -- width of one terrace (also the ground tile size)
+	PlazaHalfSize = 70, -- the SAFE ZONE in the middle (spawn, shops)
+	RingRoadHalfSize = 160, -- the conveyor ring road around the plaza
+	-- 8 player bases around the ring road: 3 north, 3 south, 1 west, 1 east.
+	PlotWidth = 80,
+	PlotDepth = 100,
 	ConveyorSpeed = 30, -- studs/sec
 	ConveyorWidth = 8,
 	UseStuds = true, -- blocky stud look on lobby parts
@@ -43,10 +47,11 @@ Config.Lobby = {
 	StudTextureSize = 2, -- studs per square
 	-- Your own decoration models. Put Models in a folder with this name in
 	-- ServerStorage, named after a prop kind below, and they replace the
-	-- built-in blocky versions wherever that kind is placed. Each model is
-	-- set on the ground (by its bounding box), turned randomly and anchored.
+	-- built-in blocky versions wherever that kind is placed (when the lobby
+	-- is generated). Each model is set on the ground (by its bounding box),
+	-- turned randomly and anchored.
 	PropsFolder = "LobbyProps",
-	PropKinds = { "Tree", "PalmTree", "Bush", "Rock", "Flowers", "Lamp" },
+	PropKinds = { "Tree", "PineTree", "Bush", "Rock", "Flowers", "Lamp" },
 }
 
 -- ───────────────────────────── SCORE ─────────────────────────────

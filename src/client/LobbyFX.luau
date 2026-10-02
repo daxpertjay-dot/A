@@ -1,7 +1,7 @@
 --!strict
 -- Makes the lobby feel alive, entirely client-side (no server bandwidth):
 -- spinning crates, bobbing floaters, pulsing neon, Brainrots dancing on their
--- pedestals, Brainrots wandering the street and moving conveyor stripes.
+-- pedestals, Brainrots wandering the SAFE ZONE and moving conveyor stripes.
 
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")

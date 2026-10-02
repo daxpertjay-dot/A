@@ -18,7 +18,7 @@ PlotManager.Init()
 local textures = count(lobby, function(d) return d:IsA("Texture") end)
 print("lobby parts", count(lobby, isPart), "prompts", count(lobby, function(d) return d:IsA("ProximityPrompt") end), "stud textures", textures)
 assert(textures > 1000, "lobby parts get the stud texture")
-local grass = lobby:FindFirstChild("Grass") :: any
+local grass = lobby:FindFirstChild("Ground"):FindFirstChild("Grass") :: any
 assert(grass and grass:FindFirstChild("Studs") and grass.TopSurface == H.Enum.SurfaceType.Smooth, "textured parts drop the classic studs")
 
 local TrackGenerator = req(H.server.Run.TrackGenerator)

@@ -9,12 +9,21 @@ with Rojo. README.md describes the game design; this file is how to work on it.
 selene src                                            # lint (must be 0 errors / 0 warnings)
 tests/run.sh                                          # headless tests (lune), ~2-3 min
 tests/run.sh boost sim                                # just some of them
-rojo build default.project.json -o build/BrainrotRunner.rbxl   # place file for Studio
+tools/bake_map.sh                                     # LobbyBuilder → map/Lobby.rbxm (the lobby map)
+rojo build place.project.json -o build/BrainrotRunner.rbxl     # place file for Studio (with the map)
 ```
 
 There is no Roblox Studio here: the Lune tests are the only way to run the
 code. Run selene and the tests before every commit. After a change the user
 will play, rebuild the .rbxl and send it to them.
+
+The lobby is a real map (`Workspace.Lobby`, file `map/Lobby.rbxm`) that the
+user edits in Studio. After changing `LobbyBuilder`/`PlotManager` building
+code, re-run `tools/bake_map.sh`. That overwrites the map, so first check
+whether the user has committed their own edited `map/Lobby.rbxm`.
+`default.project.json` (rojo serve) deliberately leaves Workspace alone.
+There's no way to see the map here except by rendering the part data
+(deserialize the rbxm in Lune and draw it).
 
 ## Layout
 
@@ -59,7 +68,8 @@ will play, rebuild the .rbxl and send it to them.
 - `tests/mirror.py` copies `src/` to `tests/.mirror/src` (gitignored) and
   rewrites `x.Position` reads to `__P(x)`, because Lune can't compute a
   part's Position from its CFrame. Write `part.Position` normally in game code.
-- `tests/harness.luau` mocks services, remotes and the script tree. Lune
+- `tests/harness.luau` mocks services, remotes and the script tree, and
+  gives game code a fixed `CFrame.lookAt` (Lune's flips ±Z directions). Lune
   never fires instance events, so tests call `H.fireAdded(instance)` to
   simulate `DescendantAdded`. The mock `Random` is seeded, so tracks are
   reproducible.
