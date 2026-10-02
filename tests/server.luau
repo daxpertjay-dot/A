@@ -52,19 +52,22 @@ local fs = require("@lune/fs")
 local map = roblox.deserializeModel(fs.readFile("map/Lobby.rbxm"))[1]
 map.Parent = H.workspace
 
--- An imported Blender tree in ServerStorage.LobbyProps, in centimetres (100x
--- too big): it replaces every blocky tree in the map, sized to match.
-local props = roblox.Instance.new("Folder"); props.Name = "LobbyProps"
-local meshTree = roblox.Instance.new("Model"); meshTree.Name = "Tree"; meshTree.Parent = props
+-- An imported Blender tree, left in Workspace where the importer puts it,
+-- nested a level deep, unanchored and in centimetres (100x too big): it's
+-- anchored, taken out of the world, and replaces every blocky tree in the
+-- map, sized to match.
+local props = roblox.Instance.new("Model"); props.Name = "LobbyProps"
+local nest = roblox.Instance.new("Model"); nest.Name = "LobbyProps.fbx"; nest.Parent = props
+local meshTree = roblox.Instance.new("Model"); meshTree.Name = "Tree"; meshTree.Parent = nest
 -- (named the way Blender exports them: prefixes and ".001" suffixes)
 for _, spec in { { "Tree_Trunk", 200, 1100 }, { "Tree_Leaves.001", 1000, 800 }, { "Tree_Outline", 1040, 1940 } } do
 	local p = roblox.Instance.new("Part"); p.Name = spec[1]; p.Size = Vector3.new(spec[2], spec[3], spec[2])
-	p.CFrame = CFrame.new(0, spec[3] / 2, 0); p.Parent = meshTree
+	p.CFrame = CFrame.new(0, spec[3] / 2, 0); p.Anchored = false; p.Parent = meshTree
 end
 meshTree.PrimaryPart = meshTree.Tree_Trunk
 local blockyTrees = 0
 for _, d in map:GetDescendants() do if d:IsA("Model") and d.Name == "Tree" then blockyTrees += 1 end end
-H.services.ServerStorage.FindFirstChild = function(_, name) return if name == "LobbyProps" then props else nil end
+props.Parent = H.workspace
 
 local Main = H.node(H.root .. "/server", nil, "Server")
 H.require(Main.Main)
@@ -82,6 +85,7 @@ for _, d in map:GetDescendants() do
 end
 print("swapped trees", swapped, "of", blockyTrees, "wrong size", wrongSize)
 assert(swapped == blockyTrees and swapped > 0 and wrongSize == 0)
+assert(meshTree.Tree_Trunk.Anchored, "an import left in Workspace is anchored so it doesn't fall apart")
 playerAdded.fn(player)
 local PlayerData = H.require(Main.PlayerData)
 local profile = assert(PlayerData.Get(player), "profile not loaded")

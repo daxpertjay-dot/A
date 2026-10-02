@@ -180,16 +180,41 @@ end
 
 -- ───────────────────────────── your models ─────────────────────────────
 
--- Your models of `kind` in ServerStorage.LobbyProps: named like the kind,
--- or the kind plus a suffix for variants ("Tree", "Tree_2", "Tree Big"…).
+-- Where your models are: ServerStorage.LobbyProps, or a LobbyProps model
+-- left in Workspace (where Studio's 3D importer puts an import). That one is
+-- anchored and taken out of the world, or its unanchored meshes would fall
+-- over and come apart when you press Play.
+local function propsRoot(): Instance?
+	local stored = ServerStorage:FindFirstChild(L.PropsFolder)
+	if stored then
+		return stored
+	end
+	local imported = workspace:FindFirstChild(L.PropsFolder)
+	if not imported then
+		return nil
+	end
+	for _, d in imported:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+		end
+	end
+	pcall(function()
+		imported.Parent = ServerStorage
+	end)
+	return imported
+end
+
+-- Your models of `kind`: Models anywhere in LobbyProps (the importer may
+-- nest them) named like the kind, or the kind and a number for variants
+-- ("Tree", "Tree_2", "Tree 3").
 local function propTemplates(kind: string): { Model }
-	local folder = ServerStorage:FindFirstChild(L.PropsFolder)
+	local root = propsRoot()
 	local found = {}
-	if folder then
-		for _, child in folder:GetChildren() do
-			local suffix = child.Name:sub(#kind + 1)
-			if child:IsA("Model") and child.Name:sub(1, #kind) == kind and (suffix == "" or suffix:match("^[%s_%-]") ~= nil) then
-				table.insert(found, child)
+	if root then
+		for _, d in root:GetDescendants() do
+			local suffix = d.Name:sub(#kind + 1)
+			if d:IsA("Model") and d.Name:sub(1, #kind) == kind and (suffix == "" or suffix:match("^[%s_%-]?%d+$") ~= nil) then
+				table.insert(found, d)
 			end
 		end
 	end
