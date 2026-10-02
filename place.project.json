@@ -26,6 +26,9 @@
       },
       "Lobby": {
         "$path": "map/Lobby.rbxm"
+      },
+      "TrackAreas": {
+        "$path": "map/TrackAreas.rbxm"
       }
     },
     "Lighting": {

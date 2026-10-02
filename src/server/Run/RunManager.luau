@@ -17,6 +17,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AreaData = require(Shared.AreaData)
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
 local ImpactRules = require(Shared.ImpactRules)
@@ -29,6 +30,7 @@ local Util = require(Shared.Util)
 local PlayerData = require(script.Parent.Parent.PlayerData)
 local Leaderboards = require(script.Parent.Parent.Leaderboards)
 local Destruction = require(script.Parent.Destruction)
+local TrackAreas = require(script.Parent.TrackAreas)
 local TrackGenerator = require(script.Parent.TrackGenerator)
 
 local RunManager = {}
@@ -44,6 +46,7 @@ type Run = {
 	phase: Phase,
 	d: number, -- server-tracked distance (studs)
 	score: number,
+	area: string, -- the area the runner is in (AreaData id)
 	baseMultiplier: number, -- from Brainrots on the base, fixed for the run
 	combo: Progression.Combo,
 	bestCombo: number,
@@ -148,6 +151,7 @@ function RunManager.StartRun(player: Player)
 		phase = "Starting",
 		d = START_D,
 		score = 0,
+		area = AreaData.First.id,
 		baseMultiplier = PlayerData.Multiplier(profile),
 		combo = Progression.NewCombo(),
 		bestCombo = 1,
@@ -179,7 +183,12 @@ function RunManager.StartRun(player: Player)
 
 	-- 1) "RUN STARTING..." fade on the client while the world is built.
 	Remotes.Event("RunStarting"):FireClient(player)
-	run.track = TrackGenerator.new(folder, origin, rng:NextInteger(1, 2 ^ 30))
+	-- The track switches area when the score would reach the next one by
+	-- the time you get there (at today's multiplier).
+	run.track = TrackGenerator.new(folder, origin, rng:NextInteger(1, 2 ^ 30), function(d: number): number
+		local meters = math.max(0, d - run.d) * Config.Run.MetersPerStud
+		return run.score + meters * Config.Score.PointsPerMeter * currentMultiplier(run)
+	end)
 
 	table.insert(run.connections, humanoid.Died:Connect(function()
 		RunManager.EndRun(player, "Died")
@@ -210,6 +219,7 @@ function RunManager.StartRun(player: Player)
 			startD = START_D,
 			trackFolder = run.track.folder,
 			multiplier = run.baseMultiplier,
+			area = run.area,
 			hype = run.hype,
 			hoverboards = profile.Hoverboards,
 			highScore = profile.Stats.HighScore,
@@ -250,6 +260,12 @@ local function updateRun(run: Run, dt: number)
 	end
 	run.d = newD
 	run.track:Update(run.d)
+	-- Entered a new area: the client changes the sky and shows its banner.
+	local area = run.track:AreaAt(run.d)
+	if area and area ~= run.area then
+		run.area = area
+		world(run.player, { type = "Area", id = area })
+	end
 end
 
 -- ───────────────────────────── client reports ─────────────────────────────
@@ -741,6 +757,9 @@ end
 
 function RunManager.Init()
 	TrackGenerator.RegisterCollisionGroups()
+	-- Load the track sections now (moving them out of Workspace), not when
+	-- the first run starts.
+	TrackAreas.Load()
 
 	runsFolder = Instance.new("Folder")
 	runsFolder.Name = "Runs"

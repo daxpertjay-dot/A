@@ -10,6 +10,7 @@ local TweenService = game:GetService("TweenService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local BrainrotData = require(Shared.BrainrotData)
 local Config = require(Shared.Config)
+local AreaData = require(Shared.AreaData)
 local DailyRewardData = require(Shared.DailyRewardData)
 local MutationData = require(Shared.MutationData)
 local PowerUpData = require(Shared.PowerUpData)
@@ -264,7 +265,8 @@ local function buildBrainrots(content: Frame)
 		if b.catchWeight == 0 then
 			status = ("%s's henchman — can't be rescued"):format(Config.Villain.Title)
 		elseif not have then
-			status = ("Rescue it on runs after %dm"):format(b.minDistance)
+			local area = AreaData.Get(b.area)
+			status = if area then ("Rescue it in %s %s"):format(area.icon, area.name) else "Rescue it on runs"
 		elseif (onPedestal[b.id] or 0) > 0 then
 			status = ("✅ On %d pedestal%s"):format(onPedestal[b.id], if onPedestal[b.id] == 1 then "" else "s")
 		else

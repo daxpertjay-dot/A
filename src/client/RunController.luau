@@ -1107,7 +1107,7 @@ function RunController.HandleWorldEvent(event: any)
 			RunController.Event:Fire("🚀 JETPACK!", Color3.fromRGB(255, 190, 60))
 		elseif event.id == "SuperSneakers" then
 			state.sneakersUntil = until_
-			RunController.Event:Fire("👟 SUPER SNEAKERS! Jump onto buses & tunnels!", Color3.fromRGB(120, 255, 140))
+			RunController.Event:Fire("👟 SUPER SNEAKERS! Jump onto wagons & roofs!", Color3.fromRGB(120, 255, 140))
 		elseif event.id == "ScoreBooster" then
 			state.boosterUntil = until_
 			RunController.Event:Fire("✖️2 SCORE BOOSTER!", Color3.fromRGB(110, 190, 255))

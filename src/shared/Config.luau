@@ -109,7 +109,7 @@ Config.Combo = {
 	Points = {
 		Clear = 1, -- jumped over / rolled under something
 		NearMiss = 2, -- last-second lane dodge
-		Roof = 2, -- landed on a bus / tunnel roof
+		Roof = 2, -- landed on a wagon / greenhouse roof
 		Smash = 1,
 		CrashThrough = 2,
 		Coins = 1,
@@ -180,7 +180,7 @@ Config.Run = {
 	MetersPerStud = 1,
 
 	-- Jump / roll. A normal jump peaks at ~9 studs: enough for barriers, not
-	-- for buses (12.5) or tunnel roofs (16) — those need a jump boost.
+	-- for wagons (12.5) or tunnel roofs (16) — those need a jump boost.
 	Gravity = 150,
 	JumpVelocity = 52,
 	HighGround = 9, -- anything you stand on this high counts as a "roof"
@@ -212,13 +212,24 @@ Config.Run = {
 	PickupTolerance = 18,
 }
 
+-- ───────────────────────────── RUN AREAS ─────────────────────────────
+-- The track changes area as your score climbs (see AreaData). Each area is
+-- built from section templates: Workspace.TrackAreas.<Area> in the place
+-- file (edit them in Studio), or built from code when that's missing.
+Config.Areas = {
+	EditOrigin = Vector3.new(-9000, 0, 0), -- where the templates sit in Workspace
+	AreaSpacing = 2400, -- studs between areas' template grids (along -Z)
+	DifficultyStep = 900, -- meters per difficulty step (easy → medium → hard)
+	RecentTemplates = 3, -- a template never repeats within this many sections
+}
+
 -- ───────────────────────────── POWER-UPS ─────────────────────────────
 -- Picked up on the track (Subway Surfers style). Upgrading one with coins
 -- makes it last longer. See PowerUpData for the list.
 Config.PowerUps = {
 	SpawnChancePerSegment = 0.15, -- a random power-up at the start of a segment
 	MysteryBoxChancePerSegment = 0.06, -- otherwise, a mystery box
-	BoostBeforeTallChance = 0.2, -- 👟 sneakers placed just before buses / tunnels
+	BoostBeforeTallChance = 0.2, -- 👟 sneakers placed just before wagons / tunnels
 	MagnetRadius = 26,
 	JetpackHeight = 32, -- studs above the street while flying (tunnel roofs are 16)
 	JetpackSpeedMultiplier = 1.25,

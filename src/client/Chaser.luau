@@ -61,7 +61,7 @@ local function build()
 	label.BackgroundTransparency = 1
 	label.Font = Enum.Font.FredokaOne
 	label.TextScaled = true
-	label.TextColor3 = Color3.fromRGB(170, 255, 120)
+	label.TextColor3 = Color3.fromRGB(255, 70, 60)
 	label.Text = ""
 	label.Parent = gui
 	local stroke = Instance.new("UIStroke")

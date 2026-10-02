@@ -87,7 +87,8 @@ local RunManager = H.require(Main.Run.RunManager)
 RunManager.StartRun(player)
 task.wait(1.3)
 local prep = assert(clientEvents.RunPrepare, "no RunPrepare")[1]
-print("prepare multiplier", prep.multiplier, "boards", prep.hoverboards, "hype", prep.hype)
+print("prepare multiplier", prep.multiplier, "boards", prep.hoverboards, "hype", prep.hype, "area", prep.area)
+assert(prep.area == "Garden", "runs start in the first area")
 task.wait(prep.goServerTime - os.clock() + 0.1)
 local runs = nil
 for i = 1, 360 do

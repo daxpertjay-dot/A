@@ -1,12 +1,13 @@
 # 🧠 Brainrot Runner
 
-A Subway Surfers-style endless runner for Roblox. The evil Brainrot guy **Verity** (with his henchman Tung Tung Tung Sahur) has kidnapped the Brainrots. You escape through the streets of Brainrot City, grab coins and power-ups, and rescue caged Brainrots. Rescued Brainrots stand on your base and raise your **score multiplier**. Every run's score levels them up, stylish play builds a **combo**, and your base charges **Hype** while you're away. Coins buy upgrades.
+A Subway Surfers-style endless runner for Roblox. The creepy grinning Brainrot **Verity** (with his henchman Tung Tung Tung Sahur) has kidnapped the Brainrots. You escape through areas inspired by Roblox games (🌱 a Grow a Garden farm, then 🌊 an Escape Tsunamis beach), grab coins and power-ups, and rescue caged Brainrots. Rescued Brainrots stand on your base and raise your **score multiplier**. Every run's score levels them up, stylish play builds a **combo**, and your base charges **Hype** while you're away. Coins buy upgrades.
 
 ```
 YOUR BASE (Brainrots on pedestals = ⭐ score multiplier, ⚡ Hype charging up)
-  → walk into YOUR RUN PORTAL → Verity bursts out of his HQ → 3… 2… 1… RUN!
+  → walk into YOUR RUN PORTAL → Verity bursts out by his shed → 3… 2… 1… RUN!
   → dodge · jump · roll · 🔥 build a combo · grab 🪙 coins, 🧲🚀👟✖️2 power-ups, ❓ mystery boxes
-  → boost-jump onto 🚌 buses and 🚇 tunnel roofs · 🔓 rescue caged Brainrots
+  → boost-jump onto 🌾 hay wagons and 🌿 greenhouse roofs · 🔓 rescue caged Brainrots
+  → score 100,000 → the track turns into 🌊 Tsunami Beach, with better Brainrots
   → caught → SAVE ME (coins) or END
   → RESULTS: score, coins, rescues, Brainrot XP and level-ups → back to your base
 ```
@@ -21,7 +22,7 @@ Everything (lobby, bases, track, characters, UI) is built from code, so it runs 
 rojo build place.project.json -o BrainrotRunner.rbxl
 ```
 
-Open the file in Studio and press **Play**. To put it on your experience, use **File → Publish to Roblox As…** and choose your place. The place includes the lobby map, `Workspace.Lobby`.
+Open the file in Studio and press **Play**. To put it on your experience, use **File → Publish to Roblox As…** and choose your place. The place includes the lobby map, `Workspace.Lobby`, and the run's track sections, `Workspace.TrackAreas`.
 
 **Option B: live-sync the scripts with Rojo**
 
@@ -31,7 +32,7 @@ Open the file in Studio and press **Play**. To put it on your experience, use **
 4. In Studio, go to **Plugins → Rojo → Connect**.
 5. Press **Play**.
 
-`rojo serve` (`default.project.json`) syncs only the scripts. It never touches `Workspace.Lobby`, so your edits to the map stay in your place.
+`rojo serve` (`default.project.json`) syncs only the scripts. It never touches `Workspace.Lobby` or `Workspace.TrackAreas`, so your edits to the maps stay in your place.
 
 **The lobby map.** `Workspace.Lobby` is a normal map: move, recolour, delete or add anything in Studio. If there's no `Workspace.Lobby`, the game generates the default one at startup. The map file `map/Lobby.rbxm` is made from `src/server/Lobby/LobbyBuilder.luau` by `tools/bake_map.sh`.
 
@@ -41,6 +42,8 @@ Most of the map is free to change, but a few things are found by name:
 - **Bases** are the Models `Plot1`, `Plot2`, … Each needs a `PlotFloor`, `ArchBeam`, `MultiplierSign`, `HighScoreSign`, `RunEntranceTrigger` and `Pedestal1`–`Pedestal10`. Move or rotate a whole base freely; delete one and there's one fewer base.
 - **Conveyors** are parts tagged `Conveyor`. They push toward their front at their `Speed` attribute, so you can move and turn them too.
 - **Run portals** are parts tagged `RunEntranceTrigger`. The shop, upgrades, daily gift and leaderboard work through their ProximityPrompts, wherever you put them.
+
+**The track sections.** Runs are built from the section Models in `Workspace.TrackAreas` (far off to the side of the lobby, around x = -9000). Edit them like any map; see [The track](#the-track-run-areas) for how they work. They're saved in `map/TrackAreas.rbxm`, made by `tools/bake_map.sh tracks`. Keep your edits the same way as the lobby: right-click `Workspace.TrackAreas` → **Save to File…** over `map/TrackAreas.rbxm`.
 
 To use DataStores and leaderboards in Studio, turn on **Game Settings → Security → Enable Studio Access to API Services**.
 
@@ -102,7 +105,7 @@ Playing well builds a combo that multiplies your multiplier, from x1.0 up to **x
 |---|---|
 | Clear an obstacle (jump over it) | +1 |
 | **Near miss**: change lanes just before hitting something (within 0.5s) | +2 |
-| **Roof run**: land on a bus or tunnel roof | +2 |
+| **Roof run**: land on a wagon or tunnel roof | +2 |
 | Smash something / crash through a wall | +1 / +2 |
 | Every 15 coins | +1 |
 | Power-up / mystery box | +1 |
@@ -116,24 +119,23 @@ The combo starts draining 2.5s after your last trick, a sideswipe halves it, and
 - New players start fully hyped. The lobby wallet shows your Hype and when it'll be full, and your base sign shows `⚡ HYPE 64%`.
 
 ### 🔓 Brainrots
-Verity keeps them in cages on the tracks; run through a cage to rescue it. Rarer Brainrots only appear further into a run:
+Verity keeps them in cages on the track; run through a cage to rescue it. Each area has its own Brainrots, and later areas have much bigger bonuses:
 
-| Brainrot | Appears after |
-|---|---|
-| Chimpanzini | 0m |
-| Patapim | 100m |
-| Tralalero | 250m |
-| Ballerina | 400m |
-| Bombardiro | 700m |
-| Lirilì | 900m |
-| Bombombini | 1,200m |
-| Cappuccino Assassino | 1,600m |
-| Trippi Troppi | 2,200m |
+| Area | Brainrot | Rarity | Bonus |
+|---|---|---|---|
+| 🌱 Grow a Garden | Chimpanzini Bananini · Brr Brr Patapim | Uncommon | +1x |
+| | Lirilì Larilà · Ballerina Cappuccina | Rare | +2x |
+| | Bombardiro Crocodilo | Epic | +3x |
+| | Cappuccino Assassino | Legendary | +5x |
+| 🌊 Tsunami Beach | Tralalero Tralala | Rare | +6x |
+| | Trippi Troppi · Bombombini Gusini | Epic | +8x · +9x |
+| | Cocofanto Elefanto | Legendary | +14x |
+| | Chef Crabracadabra | Legendary | +16x |
 
 Rescues are kept even if you get caught. Your best Brainrots automatically take the pedestals.
 
 ### 🪙 Coins (Subway Surfers style)
-- Every coin is worth **1**. A run earns a few hundred: coin lines between obstacles, arcs over barriers that match your jump exactly, and coin lines along the tops of buses and tunnels.
+- Every coin is worth **1**. A run earns a few hundred: coin lines between obstacles, arcs over barriers that match your jump exactly, and coin lines along the tops of wagons, shacks and tunnels.
 - The big moments are the **🚀 Jetpack sky trail** (a hundred-plus coins) and **❓ Mystery Boxes** (100–1,500 coins or hoverboards).
 - Coins buy:
   - **Power-up upgrades.** 5 levels each, making them last longer: 500 / 1,500 / 3,500 / 7,500 / 15,000 coins.
@@ -146,42 +148,73 @@ Rescues are kept even if you get caught. Your best Brainrots automatically take 
 |---|---|---|
 | 🧲 Coin Magnet | pulls coins in | 10s → 20s |
 | 🚀 Jetpack | **fly** high over everything along a sky-coin trail, skipping that stretch | 6s → 12s |
-| 👟 Super Sneakers | huge jumps: **onto buses and tunnel roofs** | 10s → 20s |
+| 👟 Super Sneakers | huge jumps: **onto wagons, shacks and tunnel roofs** | 10s → 20s |
 | ✖️2 Score Booster | doubles your multiplier | 10s → 20s |
 
-A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It **boosts your jump** high enough for buses and tunnel roofs, and it saves you from one crash by breaking instead. On the board your character surfs: turned sideways, knees bent, arms out. To use a real animation instead, put its ID in `Config.Animations.Hoverboard`.
+A **🛹 Hoverboard** (bought with coins, or from daily rewards and mystery boxes) lasts 30s. It **boosts your jump** high enough for wagon and tunnel roofs, and it saves you from one crash by breaking instead. On the board your character surfs: turned sideways, knees bent, arms out. To use a real animation instead, put its ID in `Config.Animations.Hoverboard`.
 
 Power-ups are deliberately rare, so each one feels like a moment:
-- A random one appears at the start of about 1 in 7 segments; otherwise there's sometimes a mystery box.
-- Super Sneakers sometimes wait just before buses and tunnels.
+- A random one appears in about 1 in 7 sections; otherwise there's sometimes a mystery box.
+- Super Sneakers sometimes wait just before wagons and tunnels.
 
 ### The chase
 Crashes let **Verity** close in:
 - **Running into the front** of something you can't break stops you dead.
-- **Switching lanes into the side** of something (a bus beside you, a vault wall) bounces you back into your lane. You stumble, drop to 60% speed for a moment and lose half your combo, like in Subway Surfers.
+- **Switching lanes into the side** of something (a hay wagon beside you) bounces you back into your lane. You stumble, drop to 60% speed for a moment and lose half your combo, like in Subway Surfers.
 
-Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run. **Reviving sends out a 💥 shockwave** that blows away every structure around you (buses, walls, barriers, from 45 studs behind to 110 ahead), so you never come back to life staring at a bus. **BACK TO BASE** always gets you home, even if you died mid-run or during the "RUN STARTING…" fade.
+Stumble too much and he's right behind you with his net; one more mistake and he catches you. You can then **SAVE ME** with coins (or Robux) or end the run. **Reviving sends out a 💥 shockwave** that blows away every structure around you (wagons, walls, fences, from 45 studs behind to 110 ahead), so you never come back to life staring at a wall. **BACK TO BASE** always gets you home, even if you died mid-run or during the "RUN STARTING…" fade.
 
-### The track: Brainrot City streets
-You run down the middle of the road at sunset, with shops and apartment blocks on both sides. Sections:
+### The track: run areas
+The track changes as your score climbs. Each area is inspired by a Roblox game, so it feels familiar, yet different. You get a big banner and a new sky when you enter one, and the HUD shows where the next one starts.
 
-- **Streets**: barriers to jump, crates to smash. Rows are well spaced, and often only one or two lanes are blocked.
-- **🚌 Buses**: switch lanes around them.
-- **🚇 Underpasses**: run straight through.
-- **Smash zones**: wooden walls.
-- **Bonus vaults** and **rescue cages**.
+| Score | Area | Looks like | Obstacles |
+|---|---|---|---|
+| 0 | 🌱 **Grow a Garden** | dirt path through studded grass, fenced crop beds, seed / gear shop stands, blocky trees, a red barn | wooden fences and crop planters to jump, hay bales to smash, barn walls to crash through, 🌾 hay wagons and 🌿 greenhouses to boost onto |
+| 100,000 | 🌊 **Tsunami Beach** (Escape Tsunamis for Brainrots) | sandy path by the sea with the tsunami out on the water, palms, umbrellas, beach huts | sand castles and driftwood to jump, coolers to smash, tiki walls to crash through, 🏄 surf shacks and 🎡 the pier to boost onto |
+| 750,000 | area 3 (to come) | | |
+| 2,500,000 | area 4 (to come) | | |
 
-**Jump boosts and roofs.** A normal jump peaks at about 9 studs. That clears barriers, but it can't reach a bus roof (12.5) or a tunnel roof (16). With a **jump boost** (👟 Super Sneakers or 🛹 a hoverboard) you can jump onto them and run across the top, where the best coin lines are. Notes:
+The run starts in front of Verity's shed. Sections are kept calm: rows are well spaced, usually only one or two lanes are blocked, and there's always a way through.
+
+**Jump boosts and roofs.** A normal jump peaks at about 9 studs. That clears fences, but it can't reach a wagon roof (12.5) or a tunnel roof (16). With a **jump boost** (👟 Super Sneakers or 🛹 a hoverboard) you can jump onto them and run across the top, where the best coin lines are. Notes:
 
 - The roof run also scores a combo bonus.
 - Time your jump: hit the tunnel entrance too low and you crash into it.
 - Inside a tunnel, the ceiling stops boosted jumps.
-- Sneakers often spawn just before buses and tunnels, and a sign marks each tunnel.
+- Sneakers often spawn just before wagons and tunnels, and a sign marks each tunnel.
 
-Destruction is still in: small things smash, wooden walls break at high speed, and concrete chips with repeated hits.
+Destruction is still in: small things smash, and wooden walls break at high speed.
+
+**Editing the sections.** Each area is a folder of section Models in `Workspace.TrackAreas` (`Garden`, `Beach`). A run lays them end to end, picking at random by kind and difficulty. Every Model has:
+- an invisible `Origin` part, its PrimaryPart, at the start of the section; the section runs from there along -Z for its `Length` attribute
+- attributes `Kind` (sections of a kind take turns; `Start` and `Gate` are special), `Weight` (how often), `Cooldown`, and `Difficulty` (0 easy, 1 medium from 900 m, 2 hard from 1,800 m)
+- folders:
+  - `Ground`: what you stand on (the path, roofs)
+  - `Obstacles`: one Model per obstacle
+  - `Scenery`: looks only
+  - `Coins`
+  - `Spots`: cyan `PickupSpot`s and magenta `CageSpot`s. Each run rolls power-ups, mystery boxes and caged Brainrots onto them.
+
+Edit, duplicate or add sections freely. Parts you add to `Ground` become standable. Parts you add to `Obstacles` become crashable; an obstacle Model with no attributes is an unbreakable wall, and its lane is worked out from where it stands. To get a fresh copy of the built-in sections, run `tools/bake_map.sh tracks`. To add an area: add it to `src/shared/AreaData.luau`, give it Brainrots in `BrainrotData`, and add a builder in `src/server/Run/Areas/` (see `Garden.luau`), or just build its folder of sections in Studio.
+
+**Milestone math.** How far a run has to go is score ÷ (points per meter × multiplier). `tools/milestones.luau` works it out from the real numbers (speed curve, Brainrot bonuses, levels, area thresholds); re-run it when multipliers change. With an average x1.5 combo and no Hype or booster:
+
+Average catch bonus: Garden +1.6x (best +5), Beach +8.3x (best +16). Combo assumed x1.5.
+
+| Base | Base x | Run x | 🌊 Tsunami Beach at 100k | (area 3) at 750k | (area 4) at 2.5M |
+|---|---:|---:|---:|---:|---:|
+| Starter: 3 Garden catches, Lv 1 | 5.7 | 8.6 | 11.6k m · 2:54 | 87.2k m · 19:03 | 290.8k m · 1h02m |
+| 10 Garden catches, Lv 1 | 16.8 | 25.2 | 3.9k m · 1:10 | 29.8k m · 6:47 | 99.3k m · 21:39 |
+| 10 Garden catches, Lv 5 | 32.5 | 48.8 | 2k m · 0:39 | 15.3k m · 3:42 | 51.2k m · 11:22 |
+| 10 best Garden, Lv 10 | 163.5 | 245.2 | 407 m · 0:08 | 3k m · 0:56 | 10.1k m · 2:36 |
+| 10 Beach catches, Lv 1 | 84.1 | 126.1 | 793 m · 0:16 | 5.9k m · 1:39 | 19.8k m · 4:39 |
+| 10 Beach catches, Lv 5 | 167.1 | 250.7 | 398 m · 0:08 | 2.9k m · 0:55 | 9.9k m · 2:33 |
+| 10 best Beach, Lv 10 | 521.0 | 781.5 | 127 m · 0:02 | 959 m · 0:19 | 3.1k m · 0:58 |
+
+So far, a starter base needs a ~3 minute run to reach the beach. A Lv 10 Garden base is there in seconds, so the thresholds (or the late-game bonuses) will need tuning once the multipliers are final.
 
 ### Verity
-Verity is a big angry Brainrot guy: a giant pink brain with a mustache, a top hat and sneakers, carrying a net, with Tung Tung Tung Sahur running beside him. To use **your own Verity model**, put a Model named `VerityModel` in **ReplicatedStorage**, with its PrimaryPart at the feet and facing forward. The chase and the lobby statue will use it automatically. Optionally, name one of its parts `Bat` to make it swing.
+Verity is a Minecraft-horror style Brainrot: a grimy yellow smiley ball with black eyes, a huge toothy grin and a red glow, with Tung Tung Tung Sahur running beside him. To use **your own Verity model**, put a Model named `VerityModel` in **ReplicatedStorage**, with its PrimaryPart at the feet and facing forward. The chase and the lobby statue will use it automatically.
 
 ### Flying
 With the 🚀 Jetpack your character flies Superman-style: tipped forward, one fist out, with a flaming jetpack on your back. To use a real animation instead, put its ID in `Config.Animations.Fly`.
@@ -212,6 +245,8 @@ With the 🚀 Jetpack your character flies Superman-style: tipped forward, one f
 
 ```
 map/Lobby.rbxm                 the lobby map (Workspace.Lobby), made by tools/bake_map.sh
+map/TrackAreas.rbxm            the run's section templates (Workspace.TrackAreas), tools/bake_map.sh tracks
+tools/milestones.luau          score milestone math (distance / time to each area)
 place.project.json             builds the place with the map; default.project.json = scripts only (rojo serve)
 assets/StudTexture.png         the lobby's stud texture (upload it; see "Lobby & your base")
 tools/make_stud_texture.py     draws that texture
@@ -220,7 +255,8 @@ src/
 ├── shared/                    ReplicatedStorage.Shared
 │   ├── Config.luau            ← all tuning: villain, score, levels, combo, Hype, coins, power-ups, speeds, camera
 │   ├── PowerUpData.luau       power-ups, durations per level, upgrade costs
-│   ├── BrainrotData.luau      Brainrots: multiplier bonus, rarity, where they appear
+│   ├── AreaData.luau          run areas: name, score where each starts, lighting
+│   ├── BrainrotData.luau      Brainrots: multiplier bonus, rarity, which area they're caged in
 │   ├── Progression.luau       Brainrot levels/XP, style combo, Hype (shared math)
 │   ├── MutationData.luau      Gold / Diamond / Rainbow / Galaxy variants
 │   ├── DailyRewardData.luau   7-day reward track
@@ -236,8 +272,10 @@ src/
 │   ├── Lobby/PlotManager.luau   player bases: pedestals, multiplier sign, run portal
 │   └── Run/
 │       ├── RunManager.luau    run lifecycle, score, combo, Hype, power-ups, rescues, XP, results
-│       ├── TrackGenerator.luau  generates segments ahead / recycles behind
-│       ├── Segments.luau      Brainrot City streets: buses, tunnels, obstacles
+│       ├── TrackGenerator.luau  lays sections ahead (switching area by score) / recycles behind
+│       ├── TrackAreas.luau    the section library: Workspace.TrackAreas, or built from code
+│       ├── Areas/             Kit (section toolkit), Garden, Beach: the built-in sections
+│       ├── Pickups.luau       power-up boxes, mystery boxes, Brainrot cages
 │       └── Destruction.luau   breakable walls & debris
 └── client/                    StarterPlayerScripts.Client
     ├── Main.client.luau       lobby ⇄ run orchestration

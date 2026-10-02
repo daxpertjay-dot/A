@@ -10,6 +10,7 @@ local TextChatService = game:GetService("TextChatService")
 local TweenService = game:GetService("TweenService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AreaData = require(Shared.AreaData)
 local Config = require(Shared.Config)
 local Remotes = require(Shared.Remotes)
 
@@ -55,7 +56,7 @@ local function playSound(id: string, volume: number?)
 	end)
 end
 
--- Runs happen in the streets of Brainrot City at sunset.
+-- Each run area has its own sky (AreaData lighting).
 local lobbyLighting = {
 	ClockTime = Lighting.ClockTime,
 	OutdoorAmbient = Lighting.OutdoorAmbient,
@@ -63,16 +64,18 @@ local lobbyLighting = {
 	FogColor = Lighting.FogColor,
 }
 
-local function setRunAtmosphere(enabled: boolean)
+local function setRunAtmosphere(enabled: boolean, areaId: string?)
 	if enabled then
-		TweenService:Create(Lighting, TweenInfo.new(1), {
-			ClockTime = 17.6,
-			OutdoorAmbient = Color3.fromRGB(170, 130, 140),
-			Brightness = 2.6,
-			FogColor = Color3.fromRGB(255, 170, 140),
+		local area = AreaData.Get(areaId) or AreaData.First
+		local look = area.lighting
+		TweenService:Create(Lighting, TweenInfo.new(1.5), {
+			ClockTime = look.ClockTime,
+			OutdoorAmbient = look.OutdoorAmbient,
+			Brightness = look.Brightness,
+			FogColor = look.FogColor,
+			FogStart = look.FogStart,
+			FogEnd = look.FogEnd,
 		}):Play()
-		Lighting.FogStart = 260
-		Lighting.FogEnd = 700
 	else
 		Lighting.FogStart = 0
 		Lighting.FogEnd = 100000
@@ -123,7 +126,7 @@ Remotes.Event("RunPrepare").OnClientEvent:Connect(function(info)
 		return
 	end
 	LobbyFX.SetEnabled(false)
-	setRunAtmosphere(true)
+	setRunAtmosphere(true, info.area)
 	RunHUD.Prepare(info)
 	Chaser.Start()
 	Chaser.PlayIntro()
@@ -145,6 +148,11 @@ end)
 
 Remotes.Event("RunWorld").OnClientEvent:Connect(function(event)
 	RunController.HandleWorldEvent(event)
+	if event.type == "Area" then
+		setRunAtmosphere(true, event.id)
+		RunHUD.SetArea(event.id)
+		playSound(Config.Sounds.PowerUp)
+	end
 	if event.type == "PowerUp" or event.type == "Hoverboard" or event.type == "MysteryBox" then
 		playSound(Config.Sounds.PowerUp)
 	end

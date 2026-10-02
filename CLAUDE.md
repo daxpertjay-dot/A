@@ -9,7 +9,8 @@ with Rojo. README.md describes the game design; this file is how to work on it.
 selene src                                            # lint (must be 0 errors / 0 warnings)
 tests/run.sh                                          # headless tests (lune), ~2-3 min
 tests/run.sh boost sim                                # just some of them
-tools/bake_map.sh                                     # LobbyBuilder → map/Lobby.rbxm (the lobby map)
+tools/bake_map.sh [lobby] [tracks]                    # → map/Lobby.rbxm, map/TrackAreas.rbxm (both by default)
+lune run tools/milestones.luau                        # score milestone math (after tests/mirror.py)
 rojo build place.project.json -o build/BrainrotRunner.rbxl     # place file for Studio (with the map)
 ```
 
@@ -19,19 +20,29 @@ will play, rebuild the .rbxl and send it to them.
 
 The lobby is a real map (`Workspace.Lobby`, file `map/Lobby.rbxm`) that the
 user edits in Studio. After changing `LobbyBuilder`/`PlotManager` building
-code, re-run `tools/bake_map.sh`. That overwrites the map, so first check
+code, re-run `tools/bake_map.sh lobby`. That overwrites the map, so first check
 whether the user has committed their own edited `map/Lobby.rbxm`.
+The run's track sections are a map too (`Workspace.TrackAreas`, file
+`map/TrackAreas.rbxm`); after changing `Run/Areas/*`, re-run
+`tools/bake_map.sh tracks`, with the same check first. The track test
+generates from the saved file, so a stale one shows up there.
 `default.project.json` (rojo serve) deliberately leaves Workspace alone.
-There's no way to see the map here except by rendering the part data
-(deserialize the rbxm in Lune and draw it).
+There's no way to see the maps here except by rendering the part data
+(deserialize the rbxm in Lune and draw it). Lune doesn't save a Model's
+WorldPivot, so anything that must keep its pivot through a map file needs a
+PrimaryPart (track sections have an `Origin` part).
 
 ## Layout
 
 - `src/shared` → ReplicatedStorage.Shared: `Config` (all tuning), data
-  modules, `Progression` (levels, combo, Hype math), `ImpactRules`, `ModelFactory`.
+  modules (`AreaData`: run areas and their score thresholds; `BrainrotData`:
+  each Brainrot's area), `Progression` (levels, combo, Hype math),
+  `ImpactRules`, `ModelFactory`.
 - `src/server` → ServerScriptService.Server: `PlayerData` (profiles, saves and
   migrations), `Economy`, `Leaderboards`, `Lobby/*`, `Run/*` (`RunManager`
-  owns runs, `TrackGenerator` and `Segments` build the track, `Destruction`).
+  owns runs; `TrackGenerator` lays section templates from `TrackAreas`, which
+  loads `Workspace.TrackAreas` or builds it with `Areas/Kit` + one builder per
+  area; `Pickups` fills each section's spots; `Destruction`).
 - `src/client` → StarterPlayerScripts.Client: `RunController` (movement,
   collisions, tricks), `RunCamera`, `Chaser`, `UI/*`, `Main.client` (lobby ⇄ run flow).
 - `tests/` → Lune harness and tests (see below).
@@ -50,10 +61,11 @@ There's no way to see the map here except by rendering the part data
   happened (`ReportHit`, `ReportStyle`, …). The server validates every
   report (the object belongs to the player's track, it's near the runner,
   and it counts once).
-- Track space in `Segments`: `d` is the distance along the run (forward is
-  world -Z), `x` the offset from the centre lane, `y` the height above the
-  road. Every obstacle model carries `ObstacleType`, `Kind`, `Lane` and
-  `TrackD` attributes.
+- Track space in `Areas/Kit`: `d` is the distance along a section (forward
+  is world -Z), `x` the offset from the centre lane, `y` the height above the
+  road. Every obstacle model carries `ObstacleType`, `Kind` and `Lane`; the
+  generator adds `TrackD` (its front, distance along the run) when it places
+  the section. Templates must stay low-clutter: the user asked for less going on.
 - Collision groups: `RunGround` (anything you can stand on), `RunObstacle`
   (anything you can crash into), and scenery stays in Default. The runner is
   kinematic; it never physically collides.
@@ -74,9 +86,10 @@ There's no way to see the map here except by rendering the part data
   simulate `DescendantAdded`. The mock `Random` is seeded, so tracks are
   reproducible.
 - Each test file prints `<NAME> OK` at the end and asserts along the way:
-  - `track`: generation stats over 20 km.
+  - `track`: generation stats over 20 km from the saved map, and the switch to
+    the Beach at 100,000 score.
   - `server`: purchases, a full run, tricks, XP, Hype, and the lobby-return paths.
   - `ui`: every panel builds.
-  - `boost`: bus and tunnel roofs, ceilings, side bumps.
+  - `boost`: hay wagon and greenhouse roofs, ceilings, side bumps.
   - `sim`: a bot plays 90 seconds.
 - A new mechanic should get an assert in the relevant test.

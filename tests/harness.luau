@@ -17,11 +17,11 @@ for _, cls in { "BasePart", "Part", "WedgePart", "CornerWedgePart", "SpawnLocati
 	roblox.implementProperty(cls, "Position", function(p) return p.CFrame.Position end, function(p, v) p.CFrame = CFrame.new(v) * p.CFrame.Rotation end)
 	roblox.implementMethod(cls, "GetPivot", function(p) return p.CFrame end)
 end
-local pivots = {}
-roblox.implementProperty("Model", "WorldPivot", function(m) return pivots[m] or CFrame.new() end, function(m, v) pivots[m] = v end)
 local function getPivot(m)
 	if m.PrimaryPart then return m.PrimaryPart.CFrame end
-	return pivots[m] or CFrame.new()
+	-- (a new Lune model has no WorldPivot until one is set)
+	local ok, pivot = pcall(function() return m.WorldPivot end)
+	return if ok then pivot else CFrame.new()
 end
 roblox.implementMethod("Model", "GetPivot", getPivot)
 roblox.implementMethod("Model", "PivotTo", function(m, target)
@@ -29,7 +29,7 @@ roblox.implementMethod("Model", "PivotTo", function(m, target)
 	for _, d in m:GetDescendants() do
 		if d:IsA("BasePart") then d.CFrame = delta * d.CFrame end
 	end
-	if not m.PrimaryPart then pivots[m] = target end
+	m.WorldPivot = delta * getPivot(m)
 end)
 roblox.implementMethod("Model", "GetBoundingBox", function(m)
 	local minV, maxV

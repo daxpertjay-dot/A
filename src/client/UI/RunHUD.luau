@@ -15,6 +15,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local AreaData = require(Shared.AreaData)
 local Config = require(Shared.Config)
 local PowerUpData = require(Shared.PowerUpData)
 local Progression = require(Shared.Progression)
@@ -42,6 +43,7 @@ local multiplierBadge: TextLabel
 local coinsLabel: TextLabel
 local distanceLabel: TextLabel
 local highLabel: TextLabel
+local areaLabel: TextLabel
 local chaseFill: Frame
 local chaseLabel: TextLabel
 local powerBars: Frame
@@ -56,6 +58,7 @@ local hypeFill: Frame
 local popupHolder: Frame
 local updateConnection: RBXScriptConnection? = nil
 local highScore = 0
+local area = AreaData.First
 
 -- Revive panel pieces (built once)
 local caughtPanel: Frame
@@ -208,6 +211,10 @@ local function update()
 	coinsLabel.Text = "🪙 " .. Util.FormatNumber(state.coins)
 	distanceLabel.Text = Util.FormatNumber(state.meters) .. "m"
 	highLabel.Text = if state.score > highScore and highScore > 0 then "🏆 NEW HIGH SCORE!" else ("🏆 " .. Util.FormatNumber(highScore))
+	local nextArea = AreaData.Next(area)
+	areaLabel.Text = if nextArea
+		then ("%s %s  ·  %s at %s"):format(area.icon, area.name, nextArea.icon, Util.FormatNumber(nextArea.fromScore))
+		else ("%s %s"):format(area.icon, area.name)
 
 	local ratio = math.clamp(state.gap / Config.Chase.MaxGap, 0, 1)
 	chaseFill.Size = UDim2.fromScale(ratio, 1)
@@ -244,6 +251,7 @@ function RunHUD.Prepare(info: any)
 	caughtPanel.Visible = false
 	resultsPanel.Visible = false
 	highScore = info.highScore or 0
+	area = AreaData.Get(info.area) or AreaData.First
 	hideFade()
 	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 	local hype = info.hype or 0
@@ -258,6 +266,16 @@ function RunHUD.Prepare(info: any)
 		updateConnection:Disconnect()
 	end
 	updateConnection = RunService.RenderStepped:Connect(update)
+end
+
+-- The runner entered a new area: big banner, and the HUD line follows.
+function RunHUD.SetArea(id: string)
+	local new = AreaData.Get(id)
+	if not new or new == area then
+		return
+	end
+	area = new
+	RunHUD.Big(("%s %s"):format(new.icon, string.upper(new.name)), new.color, 2.5)
 end
 
 -- 3 → 2 → 1 → RUN! against the server's go time.
@@ -419,6 +437,8 @@ function RunHUD.Init(playerGui: PlayerGui)
 	-- Distance + high score (top left)
 	distanceLabel = UIKit.Label({ Text = "0m", Position = UDim2.fromOffset(20, 50), Size = UDim2.fromOffset(200, 36), TextXAlignment = Enum.TextXAlignment.Left, Parent = hud })
 	highLabel = UIKit.Label({ Text = "", Position = UDim2.fromOffset(20, 88), Size = UDim2.fromOffset(240, 26), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Muted, Parent = hud })
+	-- The area you're in, and the score where the next one starts.
+	areaLabel = UIKit.Label({ Text = "", Position = UDim2.fromOffset(20, 116), Size = UDim2.fromOffset(300, 24), TextXAlignment = Enum.TextXAlignment.Left, Parent = hud })
 
 	-- Villain proximity (top centre)
 	local chase = UIKit.New("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 52), Size = UDim2.fromOffset(300, 16), BackgroundColor3 = Color3.fromRGB(40, 20, 20), Parent = hud })

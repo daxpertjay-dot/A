@@ -78,23 +78,20 @@ local hum = roblox.Instance.new("Humanoid"); hum.RigType = roblox.Enum.HumanoidR
 services.Players.LocalPlayer = { Character = character }
 
 local client = H.node(H.root .. "/client", nil, "Client")
-local TrackGenerator = H.require(H.server.Run.TrackGenerator)
 local RunController = H.require(client.RunController)
 local InputController = H.require(client.InputController)
 
 
-local Segments = H.require(H.server.Run.Segments)
-local TG = H.require(H.server.Run.TrackGenerator)
+local TrackAreas = H.require(H.server.Run.TrackAreas)
+local library = TrackAreas.Load()
 local origin = Vector3.new(6000, 0, 0)
-local function build(name, seed)
+-- A Garden section template placed at the start of a track.
+local function build(kind, variant)
 	local folder = roblox.Instance.new("Folder")
-	local model = roblox.Instance.new("Model")
+	local layouts = library.Garden.kinds[kind][0]
+	local model = TrackAreas.Place(layouts[(variant - 1) % #layouts + 1], origin, 0)
 	model.Parent = folder
-	for _, n in { "Coins", "Pickups" } do local f = roblox.Instance.new("Folder"); f.Name = n; f.Parent = model end
-	local def
-	for _, d in Segments.Definitions do if d.name == name then def = d end end
-	def.build({ folder = model, origin = origin, startD = 0, length = 120, rng = H.Random.new(seed), difficulty = 0, distance = 500 })
-	-- floor behind the segment start
+	-- floor behind the section start
 	local p = roblox.Instance.new("Part"); p.Size = Vector3.new(30, 2, 200); p.CFrame = CFrame.new(origin + Vector3.new(0, -1, 100)); p.CollisionGroup = "RunGround"; p.Parent = folder
 	return folder
 end
@@ -116,7 +113,7 @@ local function strip(folder, keep)
 end
 
 -- 1) TUNNEL
-local tunnel = build("Tunnel", 7)
+local tunnel = build("Greenhouse", 1)
 strip(tunnel, { TunnelEntrance = true })
 local entrance = 40
 local function tryTunnel(offset, boost)
@@ -160,14 +157,14 @@ RunController.Stop()
 
 -- 2) BUS
 local busFolder, busD, busLane
-for seed = 1, 50 do
-	local f = build("Buses", seed)
+for variant = 1, 2 do
+	local f = build("HayWagons", variant)
 	for _, d in f:GetDescendants() do
-		if d:GetAttribute("Kind") == "Bus" then busFolder, busD, busLane = f, d:GetAttribute("TrackD"), d:GetAttribute("Lane") break end
+		if d:GetAttribute("Kind") == "HayWagon" then busFolder, busD, busLane = f, d:GetAttribute("TrackD"), d:GetAttribute("Lane") break end
 	end
 	if busFolder then break end
 end
-strip(busFolder, { Bus = true })
+strip(busFolder, { HayWagon = true })
 local function tryBus(offset, boost)
 	local bumps = 0
 	local con = RunController.Impact:Connect(function(o) if o == "Bump" then bumps += 1 end end)

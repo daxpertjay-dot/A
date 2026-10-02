@@ -193,6 +193,24 @@ builders.Cat = function(model, look, s)
 	eyes(model, CFrame.new(0, 3.4 * s, -2.5 * s), 0.55 * s, 0.6 * s)
 end
 
+builders.Crab = function(model, look, s)
+	-- Chef Crabracadabra: a flat red crab with big claws and a chef's hat.
+	addEllipsoid(model, { Name = "Body", Size = Vector3.new(4.4, 2, 3.4) * s, CFrame = CFrame.new(0, 2 * s, 0), Color = look.body })
+	for _, side in { -1, 1 } do
+		for i = -1, 1 do
+			add(model, { Name = "Leg", Size = Vector3.new(1.8, 0.3, 0.3) * s, CFrame = CFrame.new(side * 2.4 * s, 1.1 * s, i * 0.9 * s) * CFrame.Angles(0, 0, math.rad(side * -35)), Color = look.body })
+		end
+		add(model, { Name = "Arm", Size = Vector3.new(0.4, 1.6, 0.4) * s, CFrame = CFrame.new(side * 2.2 * s, 3 * s, -1.4 * s) * CFrame.Angles(0, 0, math.rad(side * -25)), Color = look.body })
+		add(model, { Name = "Claw", Size = Vector3.new(1.3, 1.1, 1.2) * s, CFrame = CFrame.new(side * 2.7 * s, 4 * s, -1.7 * s), Color = look.body })
+		add(model, { Name = "Pincer", Size = Vector3.new(0.5, 0.9, 0.9) * s, CFrame = CFrame.new(side * 2.4 * s, 4.7 * s, -1.9 * s), Color = look.body })
+		add(model, { Name = "EyeStalk", Size = Vector3.new(0.25, 1, 0.25) * s, CFrame = CFrame.new(side * 0.6 * s, 3.3 * s, -1.1 * s), Color = look.body })
+	end
+	eyes(model, CFrame.new(0, 3.9 * s, -1.2 * s), 0.6 * s, 0.6 * s)
+	-- Chef's hat
+	add(model, { Name = "HatBand", Size = Vector3.new(1.6, 0.8, 1.6) * s, CFrame = CFrame.new(0, 3.3 * s, 0.2 * s), Color = look.accent })
+	add(model, { Name = "HatTop", Shape = Enum.PartType.Ball, Size = Vector3.one * 2 * s, CFrame = CFrame.new(0, 4.2 * s, 0.2 * s), Color = look.accent })
+end
+
 -- Mutated Brainrots: tinted and re-materialed (eyes stay as they are),
 -- sparkles for the rare ones, colour cycling for Rainbow (LobbyFX).
 local function applyMutation(model: Model, root: BasePart, mutation: MutationData.Mutation)
@@ -244,13 +262,13 @@ function ModelFactory.Brainrot(key: string, scale: number?): Model
 	return model
 end
 
--- Verity, the villain: a big Brainrot guy. A giant angry pink brain with a
--- mustache and a tiny top hat, stomping around on sneakers with a net for
--- catching Brainrots. Pivot at the feet, facing -Z.
+-- Verity, the villain: a Minecraft-horror Brainrot. A huge grungy yellow
+-- smiley ball with hollow black eyes and a wide grin full of teeth, glowing
+-- red. Pivot at the bottom of the ball, facing -Z.
 --
 -- Want your own Verity? Put a Model named Config.Villain.CustomModel (default
 -- "VerityModel") in ReplicatedStorage with its PrimaryPart at the feet,
--- facing -Z, and it is used everywhere instead (chase + lobby statue).
+-- facing -Z, and it is used everywhere instead (chase + lobby statues).
 -- Name one of its parts "Bat" to have it swing while chasing.
 function ModelFactory.Villain(scale: number?): Model
 	local s = scale or 1
@@ -267,44 +285,47 @@ function ModelFactory.Villain(scale: number?): Model
 	local root = add(model, { Name = "Root", Size = Vector3.new(1, 1, 1), CFrame = CFrame.new(0, 0.5 * s, 0), Transparency = 1, CastShadow = false })
 	model.PrimaryPart = root
 
-	local brainPink = Color3.fromRGB(240, 120, 170)
-	local brainDark = Color3.fromRGB(190, 70, 120)
-	local skin = Color3.fromRGB(240, 150, 185)
-	local black = Color3.fromRGB(20, 20, 25)
+	local r = 4.5 * s -- ball radius
+	local center = Vector3.new(0, r, 0)
+	local yellow = Color3.fromRGB(222, 186, 40)
+	local black = Color3.fromRGB(12, 10, 10)
+	local teeth = Color3.fromRGB(235, 230, 215)
 
-	-- Skinny legs in striped socks and chunky sneakers
-	for _, side in { -0.8, 0.8 } do
-		addCylinder(model, CFrame.new(side * s, 1.9 * s, 0), 3.2 * s, 0.6 * s, skin)
-		addCylinder(model, CFrame.new(side * s, 1.1 * s, 0), 0.5 * s, 0.7 * s, Color3.fromRGB(255, 255, 255))
-		add(model, { Name = "Sneaker", Size = Vector3.new(1.3, 0.8, 2.2) * s, CFrame = CFrame.new(side * s, 0.4 * s, -0.4 * s), Color = Color3.fromRGB(230, 40, 60) })
-		add(model, { Name = "Sole", Size = Vector3.new(1.35, 0.25, 2.25) * s, CFrame = CFrame.new(side * s, 0.12 * s, -0.4 * s), Color = Color3.fromRGB(255, 255, 255) })
+	local head = add(model, { Name = "Head", Shape = Enum.PartType.Ball, Size = Vector3.one * r * 2, CFrame = CFrame.new(center), Color = yellow, Material = Enum.Material.Slate })
+	-- Dirty patches on the ball
+	for i, spot in { Vector3.new(-0.5, 0.6, -0.55), Vector3.new(0.7, -0.2, -0.65), Vector3.new(-0.8, -0.4, 0.3), Vector3.new(0.3, 0.85, 0.2) } do
+		local dir = spot.Unit
+		addEllipsoid(model, { Name = "Grime", Size = Vector3.new(2.2, 1.6, 0.4) * s * (0.8 + i * 0.1), CFrame = CFrame.lookAt(center + dir * (r - 0.12 * s), center + dir * (r + 1)), Color = Color3.fromRGB(150, 120, 30) })
 	end
-	-- The brain body (the whole character is basically a brain)
-	addEllipsoid(model, { Name = "Brain", Size = Vector3.new(6, 5, 5.2) * s, CFrame = CFrame.new(0, 6 * s, 0), Color = brainPink })
-	for i = -2, 2 do
-		addEllipsoid(model, { Name = "Fold", Size = Vector3.new(0.35, 4.4, 4.6) * s, CFrame = CFrame.new(i * 1.1 * s, 6.2 * s, 0.1 * s) * CFrame.Angles(0, 0, math.rad(i * 9)), Color = brainDark })
+
+	-- A point on the front of the ball, facing outward.
+	local function onSurface(x: number, y: number, inset: number): CFrame
+		local z = -math.sqrt(math.max(0, r * r - x * x - (y - r) ^ 2))
+		local p = Vector3.new(x, y, z)
+		local outward = (p - center).Unit
+		return CFrame.lookAt(p - outward * inset, p + outward)
 	end
-	add(model, { Name = "Split", Size = Vector3.new(0.25, 1.6, 5) * s, CFrame = CFrame.new(0, 8.1 * s, 0), Color = brainDark })
-	-- Angry face on the front of the brain
-	eyes(model, CFrame.new(0, 6.6 * s, -2.45 * s), 1.1 * s, 1 * s)
+
+	-- Hollow black eyes: tall, empty ovals
 	for _, side in { -1, 1 } do
-		add(model, { Name = "Brow", Size = Vector3.new(1.4, 0.35, 0.3) * s, CFrame = CFrame.new(side * 1.1 * s, 7.4 * s, -2.55 * s) * CFrame.Angles(0, 0, math.rad(side * -22)), Color = black })
-		add(model, { Name = "Mustache", Size = Vector3.new(1.4, 0.45, 0.3) * s, CFrame = CFrame.new(side * 0.75 * s, 5.6 * s, -2.6 * s) * CFrame.Angles(0, 0, math.rad(side * 15)), Color = black })
+		addEllipsoid(model, { Name = "Eye", Size = Vector3.new(1.5, 2.6, 1) * s, CFrame = onSurface(side * 1.5 * s, r + 1.5 * s, 0.25 * s), Color = black })
 	end
-	add(model, { Name = "Grin", Size = Vector3.new(1.6, 0.3, 0.2) * s, CFrame = CFrame.new(0, 5.0 * s, -2.5 * s), Color = black })
-	-- Tiny top hat
-	addCylinder(model, CFrame.new(0.6 * s, 8.75 * s, 0), 0.25 * s, 2.6 * s, black)
-	addCylinder(model, CFrame.new(0.6 * s, 9.75 * s, 0), 1.8 * s, 1.7 * s, black)
-	addCylinder(model, CFrame.new(0.6 * s, 9.15 * s, 0), 0.35 * s, 1.75 * s, Color3.fromRGB(150, 40, 200))
-	-- Noodle arms with white gloves
-	for _, side in { -1, 1 } do
-		addCylinder(model, CFrame.new(side * 3.4 * s, 5.4 * s, -0.4 * s) * CFrame.Angles(math.rad(-30), 0, math.rad(side * 25)), 3 * s, 0.5 * s, skin)
-		add(model, { Name = "Glove", Shape = Enum.PartType.Ball, Size = Vector3.one * 1.1 * s, CFrame = CFrame.new(side * 3.9 * s, 4.2 * s, -1.3 * s), Color = Color3.fromRGB(255, 255, 255) })
+	-- The grin: a wide black curve packed with teeth
+	for i = -6, 6 do
+		local x = i * 0.52 * s
+		local y = r - 1.9 * s + 0.055 * (i * i) * s
+		add(model, { Name = "Mouth", Size = Vector3.new(0.6, 1.6, 0.6) * s, CFrame = onSurface(x, y, 0.32 * s), Color = black })
+		for _, row in { 0.4, -0.4 } do
+			add(model, { Name = "Tooth", Size = Vector3.new(0.42, 0.6, 0.3) * s, CFrame = onSurface(x, y + row * s, -0.02 * s), Color = teeth })
+		end
 	end
-	-- The Brainrot-catching net
-	local pole = add(model, { Name = "Bat", Size = Vector3.new(0.3, 5, 0.3) * s, CFrame = CFrame.new(4 * s, 6.2 * s, -2.2 * s) * CFrame.Angles(math.rad(-40), 0, 0), Color = Color3.fromRGB(120, 90, 60) })
-	pole.Name = "Bat" -- the chaser swings its "Bat" part
-	add(model, { Name = "NetRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 2.8, 2.8) * s, CFrame = CFrame.new(4 * s, 8.5 * s, -4.2 * s) * CFrame.Angles(0, 0, math.rad(90)), Color = Color3.fromRGB(230, 230, 230), Transparency = 0.3 })
+
+	-- A red glow around him
+	local glow = Instance.new("PointLight")
+	glow.Color = Color3.fromRGB(255, 40, 30)
+	glow.Range = 22 * s
+	glow.Brightness = 3
+	glow.Parent = head
 
 	model.WorldPivot = CFrame.identity
 	return model
