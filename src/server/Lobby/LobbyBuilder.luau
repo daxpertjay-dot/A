@@ -115,10 +115,10 @@ local function faceSize(size: Vector3, face: Enum.NormalId): (number, number)
 	return size.Z, size.Y
 end
 
--- The square stud texture on every visible face big enough to show it
--- (the bottom is never seen; faces under 4x4 studs show barely a square or
--- two and would cost thousands of extra textures across the map). The image
--- is a transparent overlay, so the part's own colour shows through.
+-- The square stud texture on every visible face (the bottom is never seen),
+-- down to Config.Lobby.StudTextureMinFace: fence posts and caps get studs
+-- too. The image is a transparent overlay, so the part's own colour shows
+-- through.
 local function studTexture(p: BasePart)
 	if p.Transparency >= 1 or p.Material == Enum.Material.Neon then
 		return
@@ -128,7 +128,7 @@ local function studTexture(p: BasePart)
 	end
 	for _, face in STUD_FACES do
 		local u, v = faceSize(p.Size, face)
-		if u >= 4 and v >= 4 then
+		if u >= L.StudTextureMinFace and v >= L.StudTextureMinFace then
 			local texture = Instance.new("Texture")
 			texture.Name = "Studs"
 			texture.Texture = L.StudTexture

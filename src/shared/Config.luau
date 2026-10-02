@@ -45,6 +45,13 @@ Config.Lobby = {
 	-- Empty = Roblox's classic round studs on top faces instead.
 	StudTexture = "",
 	StudTextureSize = 2, -- studs per square
+	StudTextureMinFace = 1, -- faces thinner than this (studs) stay plain
+	-- Black outline along the edges of every lobby part (cartoon look), drawn
+	-- on each player's side. The ground tiles are left out so the field
+	-- doesn't turn into a grid. Mark a part or model NoOutline to skip it.
+	Outlines = true,
+	OutlineThickness = 0.05, -- studs
+	OutlineColor = Color3.fromRGB(0, 0, 0),
 	-- Your own decoration models. Put Models in a folder with this name in
 	-- ServerStorage, named after a prop kind below, and they replace the
 	-- built-in blocky versions wherever that kind is placed (when the lobby

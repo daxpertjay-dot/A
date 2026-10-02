@@ -51,6 +51,8 @@ for cls, events in { Part = { "Touched" }, SpawnLocation = { "Touched" }, WedgeP
 		pcall(roblox.implementProperty, cls, e, function() return evt() end)
 	end
 end
+-- Lune instances have no WaitForChild; everything a test needs already exists.
+pcall(roblox.implementMethod, "Folder", "WaitForChild", function(self, name) return self:FindFirstChild(name) end)
 -- Folder.DescendantAdded: tests fire H.fireAdded(instance) themselves.
 local addedHandlers = {}
 pcall(roblox.implementProperty, "Folder", "DescendantAdded", function()
@@ -84,6 +86,7 @@ local CollectionService = {
 		return out
 	end,
 	GetInstanceAddedSignal = function() return signal() end,
+	GetInstanceRemovedSignal = function() return signal() end,
 }
 local fired = {}
 local function remote(name)

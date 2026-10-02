@@ -1,10 +1,14 @@
 --!strict
 -- Makes the lobby feel alive, entirely client-side (no server bandwidth):
 -- spinning crates, bobbing floaters, pulsing neon, Brainrots dancing on their
--- pedestals, Brainrots wandering the SAFE ZONE and moving conveyor stripes.
+-- pedestals, Brainrots wandering the SAFE ZONE, moving conveyor stripes, and
+-- the black cartoon outline on every lobby part.
 
 local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
+
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Config = require(Shared.Config)
 
 local LobbyFX = {}
 
@@ -180,7 +184,57 @@ function LobbyFX.SetEnabled(value: boolean)
 	enabled = value
 end
 
+-- ───────────────────────────── outlines ─────────────────────────────
+
+-- A black edge outline (SelectionBox) on a lobby part. Skips the ground
+-- tiles, see-through and glowing parts, sign text faces and anything marked
+-- NoOutline (or inside a model marked NoOutline).
+local function outline(instance: Instance)
+	if not instance:IsA("BasePart") or instance:FindFirstChild("Outline") then
+		return
+	end
+	local p = instance :: BasePart
+	if p.Transparency >= 0.9 or p.Material == Enum.Material.Neon or p.Name == "SignFace" or p.Name == "ConveyorStripe" then
+		return
+	end
+	if p:GetAttribute("NoOutline") or p:FindFirstAncestor("Ground") then
+		return
+	end
+	local model = p:FindFirstAncestorWhichIsA("Model")
+	if model and model:GetAttribute("NoOutline") then
+		return
+	end
+	local box = Instance.new("SelectionBox")
+	box.Name = "Outline"
+	box.Adornee = p
+	box.Color3 = Config.Lobby.OutlineColor
+	box.LineThickness = Config.Lobby.OutlineThickness
+	box.SurfaceTransparency = 1
+	box.Parent = p
+end
+
+local function outlineLobby()
+	if not Config.Lobby.Outlines then
+		return
+	end
+	task.spawn(function()
+		local lobby = workspace:WaitForChild("Lobby", 60)
+		if not lobby then
+			return
+		end
+		-- New parts too: Brainrots appearing on bases, things added later.
+		lobby.DescendantAdded:Connect(outline)
+		for i, d in lobby:GetDescendants() do
+			outline(d)
+			if i % 500 == 0 then
+				task.wait() -- spread thousands of parts over a few frames
+			end
+		end
+	end)
+end
+
 function LobbyFX.Init()
+	outlineLobby()
 	for _, tag in { "LobbySpin", "LobbySpinZ", "LobbyFloat", "LobbyPulse", "LobbyDance", "LobbyWander" } do
 		track(tag)
 	end
